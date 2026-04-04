@@ -1,0 +1,24 @@
+{
+  "name": "campuscloud-worker-agent",
+  "version": "1.1.0",
+  "description": "Worker Node Agent for CampusCloud",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "keywords": [
+    "campuscloud",
+    "worker",
+    "agent",
+    "hackathon"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  }
+}
