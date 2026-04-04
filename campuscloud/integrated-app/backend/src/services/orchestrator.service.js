@@ -23,9 +23,14 @@ const {
 } = require("../../../shared/runtimeContract.cjs");
 
 const ACTIVE_JOB_STATUSES = new Set([JOB_STATUS.ASSIGNED, JOB_STATUS.RUNNING]);
-const DEFAULT_WORKSPACE_ID = "demo-workspace";
+const DEFAULT_WORKSPACE_ID = "workspace";
 const DEFAULT_GPU_INFO = { gpu_available: false, gpu_count: 0, gpus: [] };
 const DEFAULT_DOCKER_INFO = { docker_available: false, docker_version: null };
+const WORKSPACE_STATUS = {
+  COMPLETE: "complete",
+  INCOMPLETE: "incomplete",
+};
+const LANE_ORDER = [JOB_LANES.LOW, JOB_LANES.MID, JOB_LANES.HIGH];
 
 function parseLogs(logs) {
   if (!Array.isArray(logs)) {
@@ -57,6 +62,10 @@ function createWorkerToken() {
 function normalizeWorkspaceId(value, fallback = DEFAULT_WORKSPACE_ID) {
   const workspaceId = String(value || "").trim();
   return workspaceId || fallback;
+}
+
+function normalizeWorkspacePrefix(value, fallback = DEFAULT_WORKSPACE_ID) {
+  return slugify(value || fallback) || fallback;
 }
 
 function pickGpuList(gpu) {
@@ -94,6 +103,18 @@ function getTimeMs(value) {
   return Number.isFinite(time) ? time : 0;
 }
 
+function getPreferredLaneOrder(minimumLane) {
+  if (minimumLane === JOB_LANES.HIGH) {
+    return [JOB_LANES.HIGH];
+  }
+
+  if (minimumLane === JOB_LANES.MID) {
+    return [JOB_LANES.MID, JOB_LANES.HIGH];
+  }
+
+  return [...LANE_ORDER];
+}
+
 function createOrchestratorService(options = {}) {
   const store = createStore();
   const events = new EventEmitter();
@@ -101,7 +122,7 @@ function createOrchestratorService(options = {}) {
   const maxLogsPerJob = Number(options.maxLogsPerJob) || 500;
   const backendPublicUrl = String(options.backendPublicUrl || "http://127.0.0.1:5000").replace(/\/+$/, "");
   const fallbackWorkerSecret = String(options.workerSecret || "");
-  const defaultWorkspaceId = normalizeWorkspaceId(options.defaultWorkspaceId, DEFAULT_WORKSPACE_ID);
+  const defaultWorkspaceId = normalizeWorkspacePrefix(options.defaultWorkspaceId, DEFAULT_WORKSPACE_ID);
   const defaultMaxAllocPercent = clampNumber(options.defaultMaxAllocPercent, 1, 100, 70);
 
   function emit(event, payload) {
@@ -114,6 +135,156 @@ function createOrchestratorService(options = {}) {
 
   function isFresh(node, now = Date.now()) {
     return now - getTimeMs(node.lastHeartbeatAt) <= heartbeatTimeoutMs;
+  }
+
+  function getGpuSnapshot(gpu) {
+    const gpuList = pickGpuList(gpu);
+    const totalVramMb =
+      gpuList.reduce((max, item) => Math.max(max, Number(item?.memory_mb) || 0), 0) ||
+      (Number(gpu?.memory_mb) || 0);
+    const usedVramMb =
+      gpuList.reduce((max, item) => Math.max(max, Number(item?.memory_used_mb) || 0), 0) ||
+      (Number(gpu?.memory_used_mb) || 0);
+    const utilizationPercent =
+      gpuList.reduce((max, item) => Math.max(max, Number(item?.utilization_percent) || 0), 0) ||
+      (Number(gpu?.utilization_percent) || 0);
+    const gpuName = gpuList[0]?.name || gpu?.name || null;
+    const gpuAvailable = Boolean(gpu?.gpu_available) && Boolean(gpuName || totalVramMb);
+
+    return {
+      gpuAvailable,
+      gpuName,
+      totalVramMb,
+      usedVramMb,
+      utilizationPercent,
+    };
+  }
+
+  function classifyLaneFromGpu(gpu) {
+    const snapshot = getGpuSnapshot(gpu);
+    if (!snapshot.gpuAvailable) {
+      return {
+        lane: null,
+        lane_status: "unsupported",
+        classification_reason: "no-supported-gpu-detected",
+        ...snapshot,
+      };
+    }
+
+    return {
+      lane: inferLaneFromVram(snapshot.totalVramMb),
+      lane_status: "assigned",
+      classification_reason: "classified-from-gpu-memory",
+      ...snapshot,
+    };
+  }
+
+  function getWorkspaceRecord(workspaceId) {
+    if (!workspaceId) {
+      return null;
+    }
+
+    return store.workspaces.get(workspaceId) || null;
+  }
+
+  function getFilledLaneCount(workspace) {
+    return LANE_ORDER.filter((lane) => Boolean(workspace?.[`${lane}_node_id`])).length;
+  }
+
+  function getWorkspaceStatus(workspace) {
+    return LANE_ORDER.every((lane) => Boolean(workspace?.[`${lane}_node_id`]))
+      ? WORKSPACE_STATUS.COMPLETE
+      : WORKSPACE_STATUS.INCOMPLETE;
+  }
+
+  function createWorkspaceRecord(id) {
+    const workspaceId = String(id || "").trim();
+    if (!workspaceId) {
+      throw new Error("workspace id is required");
+    }
+
+    const existing = store.workspaces.get(workspaceId);
+    if (existing) {
+      return existing;
+    }
+
+    const record = {
+      id: workspaceId,
+      createdAt: nowIso(),
+      low_node_id: null,
+      mid_node_id: null,
+      high_node_id: null,
+    };
+
+    store.workspaces.set(workspaceId, record);
+    return record;
+  }
+
+  function createNextWorkspace() {
+    let workspaceId = "";
+    do {
+      store.workspaceSequence += 1;
+      workspaceId = `${defaultWorkspaceId}-${store.workspaceSequence}`;
+    } while (store.workspaces.has(workspaceId));
+
+    return createWorkspaceRecord(workspaceId);
+  }
+
+  function clearNodeWorkspaceAssignment(nodeId) {
+    for (const workspace of store.workspaces.values()) {
+      for (const lane of LANE_ORDER) {
+        const slotKey = `${lane}_node_id`;
+        if (workspace[slotKey] === nodeId) {
+          workspace[slotKey] = null;
+        }
+      }
+    }
+  }
+
+  function findWorkspaceMissingLane(lane, preferredWorkspaceId = null) {
+    if (!lane) {
+      return null;
+    }
+
+    const preferred = preferredWorkspaceId ? getWorkspaceRecord(preferredWorkspaceId) : null;
+    if (preferred && !preferred[`${lane}_node_id`]) {
+      return preferred;
+    }
+
+    return (
+      Array.from(store.workspaces.values())
+        .filter((workspace) => !workspace[`${lane}_node_id`])
+        .sort((left, right) => {
+          const fillDelta = getFilledLaneCount(right) - getFilledLaneCount(left);
+          if (fillDelta !== 0) {
+            return fillDelta;
+          }
+
+          const createdDelta = getTimeMs(left.createdAt) - getTimeMs(right.createdAt);
+          if (createdDelta !== 0) {
+            return createdDelta;
+          }
+
+          return String(left.id).localeCompare(String(right.id));
+        })[0] || null
+    );
+  }
+
+  function assignNodeToWorkspace(node) {
+    clearNodeWorkspaceAssignment(node.node_id);
+
+    if (!node.lane) {
+      node.workspace_id = null;
+      return null;
+    }
+
+    const workspace =
+      findWorkspaceMissingLane(node.lane, node.workspace_id) ||
+      createNextWorkspace();
+
+    workspace[`${node.lane}_node_id`] = node.node_id;
+    node.workspace_id = workspace.id;
+    return workspace;
   }
 
   function getChildJobs(parentId) {
@@ -142,21 +313,16 @@ function createOrchestratorService(options = {}) {
       (total, job) => total + (Number(job.estimated_gpu_percent) || 0),
       0
     );
-    const gpuList = pickGpuList(node.gpu);
-    const totalVramMb =
-      gpuList.reduce((max, gpu) => Math.max(max, Number(gpu?.memory_mb) || 0), 0) ||
-      (Number(node.gpu?.memory_mb) || 0);
-    const usedVramMb = gpuList.reduce((max, gpu) => Math.max(max, Number(gpu?.memory_used_mb) || 0), 0);
-    const actualFreeVramMb = totalVramMb > 0 ? Math.max(0, totalVramMb - usedVramMb) : 0;
+    const classification = classifyLaneFromGpu(node.gpu);
+    const actualFreeVramMb =
+      classification.totalVramMb > 0
+        ? Math.max(0, classification.totalVramMb - classification.usedVramMb)
+        : 0;
     const estimatedFreeVramMb =
-      totalVramMb > 0 ? Math.max(0, Math.round(totalVramMb * (1 - currentAllocPercent / 100))) : 0;
+      classification.totalVramMb > 0
+        ? Math.max(0, Math.round(classification.totalVramMb * (1 - currentAllocPercent / 100)))
+        : 0;
     const freeVramMb = actualFreeVramMb || estimatedFreeVramMb;
-    const utilizationPercent =
-      gpuList.reduce((max, gpu) => Math.max(max, Number(gpu?.utilization_percent) || 0), 0) ||
-      Math.min(currentAllocPercent, 100);
-    const gpuName = gpuList[0]?.name || node.gpu?.name || null;
-    const gpuAvailable = Boolean(node.gpu?.gpu_available);
-    const lane = normalizeLane(node.lane, gpuAvailable ? inferLaneFromVram(totalVramMb) : JOB_LANES.LOW);
     const dockerReady = Boolean(node.allow_docker && node.docker?.docker_available);
 
     const status = fresh ? (jobs.length > 0 ? NODE_STATUS.BUSY : NODE_STATUS.IDLE) : NODE_STATUS.OFFLINE;
@@ -166,32 +332,41 @@ function createOrchestratorService(options = {}) {
       status,
       current_alloc_percent: currentAllocPercent,
       current_queue_depth: jobs.length,
-      utilization_percent: utilizationPercent,
-      vram_mb: totalVramMb,
+      utilization_percent: classification.utilizationPercent || Math.min(currentAllocPercent, 100),
+      vram_mb: classification.totalVramMb,
       free_vram_mb: freeVramMb,
-      gpu_name: gpuName,
-      gpu_available: gpuAvailable,
+      gpu_name: classification.gpuName,
+      gpu_available: classification.gpuAvailable,
       docker_ready: dockerReady,
-      lane,
+      lane: classification.lane,
+      lane_status: classification.lane_status,
+      classification_reason: classification.classification_reason,
       current_job_id: runningJob?.id || null,
+      availability: status === NODE_STATUS.OFFLINE ? "offline" : status === NODE_STATUS.BUSY ? "busy" : "available",
     };
   }
 
   function toPublicNode(node, now = Date.now()) {
     const derived = getNodeDerived(node, now);
     const heartbeatAgeMs = Math.max(0, now - getTimeMs(node.lastHeartbeatAt));
+    const workspace = getWorkspaceRecord(node.workspace_id);
 
     return clone({
       node_id: node.node_id,
       nodeId: node.node_id,
       workerId: node.node_id,
-      workspace_id: node.workspace_id,
+      workspace_id: node.workspace_id || null,
+      workspace_status: workspace ? getWorkspaceStatus(workspace) : null,
       name: node.name,
       hostname: node.hostname,
       lane: derived.lane,
+      detected_lane: derived.lane,
+      lane_status: derived.lane_status,
+      classification_reason: derived.classification_reason,
       status: node.status || derived.status,
       online: derived.status !== NODE_STATUS.OFFLINE,
       connectivity: derived.status === NODE_STATUS.OFFLINE ? "offline" : "online",
+      availability: derived.availability,
       gpu_available: derived.gpu_available,
       gpu_name: derived.gpu_name,
       gpuSummary: summarizeGpu({
@@ -268,12 +443,15 @@ function createOrchestratorService(options = {}) {
 
   function toPublicJob(job) {
     const chunkProgress = buildChunkProgress(job);
+    const assignedNode = job.node_id ? store.nodes.get(job.node_id) : null;
+    const assignedLane = assignedNode ? getNodeDerived(assignedNode).lane : null;
 
     return clone({
       id: job.id,
       job_id: job.id,
       jobId: job.id,
       workspace_id: job.workspace_id,
+      assigned_workspace_id: job.workspace_id,
       status: job.status,
       image: job.image,
       command: job.command,
@@ -281,7 +459,11 @@ function createOrchestratorService(options = {}) {
       env: clone(job.env || {}),
       requires_gpu: Boolean(job.requires_gpu),
       lane_required: job.lane_required,
+      planned_lane: job.lane_required || null,
+      assigned_lane: assignedLane || null,
+      candidate_lanes: safeClone(job.candidate_lanes, []),
       estimated_gpu_percent: Number(job.estimated_gpu_percent) || 0,
+      queue_reason: job.queue_reason || null,
       chunk_count: Number(job.chunk_count) || 1,
       parent_job_id: job.parent_job_id || null,
       chunk_index: Number.isInteger(job.chunk_index) ? job.chunk_index : null,
@@ -310,9 +492,63 @@ function createOrchestratorService(options = {}) {
     });
   }
 
+  function toPublicWorkspace(workspace, now = Date.now()) {
+    const lowNode = workspace.low_node_id ? store.nodes.get(workspace.low_node_id) : null;
+    const midNode = workspace.mid_node_id ? store.nodes.get(workspace.mid_node_id) : null;
+    const highNode = workspace.high_node_id ? store.nodes.get(workspace.high_node_id) : null;
+    const assignedNodes = [lowNode, midNode, highNode].filter(Boolean);
+    const usagePercent = assignedNodes.length
+      ? Math.round(
+          assignedNodes.reduce((sum, node) => sum + getNodeDerived(node, now).current_alloc_percent, 0) /
+            assignedNodes.length
+        )
+      : 0;
+    const activeJobs = Array.from(store.jobs.values())
+      .filter((job) => !job.is_parent)
+      .filter((job) => job.workspace_id === workspace.id)
+      .filter((job) => ACTIVE_JOB_STATUSES.has(job.status));
+    const status = getWorkspaceStatus(workspace);
+
+    return clone({
+      id: workspace.id,
+      status,
+      is_complete: status === WORKSPACE_STATUS.COMPLETE,
+      low_node_id: workspace.low_node_id || null,
+      mid_node_id: workspace.mid_node_id || null,
+      high_node_id: workspace.high_node_id || null,
+      current_usage_percent: usagePercent,
+      active_jobs_count: activeJobs.length,
+      active_job_ids: activeJobs.map((job) => job.id),
+      filled_lane_count: getFilledLaneCount(workspace),
+      lanes: {
+        low: {
+          lane: JOB_LANES.LOW,
+          node_id: workspace.low_node_id || null,
+          node: lowNode ? toPublicNode(lowNode, now) : null,
+        },
+        mid: {
+          lane: JOB_LANES.MID,
+          node_id: workspace.mid_node_id || null,
+          node: midNode ? toPublicNode(midNode, now) : null,
+        },
+        high: {
+          lane: JOB_LANES.HIGH,
+          node_id: workspace.high_node_id || null,
+          node: highNode ? toPublicNode(highNode, now) : null,
+        },
+      },
+    });
+  }
+
+  function getPublicWorkspace(workspaceId, now = Date.now()) {
+    const workspace = getWorkspaceRecord(workspaceId);
+    return workspace ? toPublicWorkspace(workspace, now) : null;
+  }
+
   function emitNodeEvent(eventType, node, reason, now = Date.now()) {
     emit(eventType, {
       node: toPublicNode(node, now),
+      workspace: getPublicWorkspace(node.workspace_id, now),
       reason: reason || null,
     });
   }
@@ -321,6 +557,7 @@ function createOrchestratorService(options = {}) {
     emit(eventType, {
       job: toPublicJob(job),
       node: node ? toPublicNode(node) : null,
+      workspace: getPublicWorkspace(job.workspace_id),
       reason: reason || null,
     });
   }
@@ -333,16 +570,23 @@ function createOrchestratorService(options = {}) {
     const nextStatus = derived.status;
     const nextJobId = derived.current_job_id;
     const nextLane = derived.lane;
-    const statusChanged = previousStatus !== nextStatus || previousJobId !== nextJobId || node.lane !== nextLane;
+    const laneChanged = node.lane !== nextLane;
+    const statusChanged = previousStatus !== nextStatus || previousJobId !== nextJobId || laneChanged;
 
     node.status = nextStatus;
     node.current_job_id = nextJobId;
     node.lane = nextLane;
+    node.lane_status = derived.lane_status;
+    node.classification_reason = derived.classification_reason;
 
     if (nextStatus === NODE_STATUS.OFFLINE) {
       node.offline_reason = options.offlineReason || node.offline_reason || "heartbeat-timeout";
     } else {
       node.offline_reason = null;
+    }
+
+    if (laneChanged) {
+      assignNodeToWorkspace(node);
     }
 
     if (statusChanged) {
@@ -370,20 +614,23 @@ function createOrchestratorService(options = {}) {
 
   function toPublicOnboarding(record) {
     const node = store.nodes.get(record.workerId);
+    const publicNode = node ? toPublicNode(node) : null;
 
     return {
       workerId: record.workerId,
       workerName: record.workerName,
       nodeName: record.workerName,
       ownerName: record.ownerName,
-      workspaceId: record.workspaceId,
-      lane: record.lane,
-      maxAllocPercent: record.maxAllocPercent,
+      workspaceId: publicNode?.workspace_id || null,
+      assignedWorkspaceId: publicNode?.workspace_id || null,
+      lane: publicNode?.lane || null,
+      detectedLane: publicNode?.lane || null,
       allowDocker: record.allowDocker,
       tags: safeClone(record.tags, []),
       backendUrl: record.backendUrl,
+      assignmentMode: "automatic",
       status: getOnboardingStatus(record.workerId),
-      nodeStatus: node ? toPublicNode(node).status : null,
+      nodeStatus: publicNode?.status || null,
       createdAt: record.createdAt,
       connectedAt: record.connectedAt,
     };
@@ -432,15 +679,13 @@ function createOrchestratorService(options = {}) {
         `WORKER_TOKEN=${record.workerToken}`,
         `BACKEND_API_KEY=${record.workerToken}`,
         "",
-        `WORKSPACE_ID=${record.workspaceId}`,
         `WORKER_ID=${record.workerId}`,
         `NODE_NAME=${record.workerName}`,
         `WORKER_NAME=${record.workerName}`,
-        `NODE_LANE=${record.lane}`,
-        `MAX_ALLOC_PERCENT=${record.maxAllocPercent}`,
         `ALLOW_DOCKER=${record.allowDocker ? "true" : "false"}`,
         `WORKER_TAGS=${record.tags.join(",")}`,
         "",
+        "# Workspace and lane are assigned automatically by the backend after the agent connects.",
         "HEARTBEAT_INTERVAL_MS=5000",
         "POLL_INTERVAL_MS=3000",
         "REQUEST_TIMEOUT_MS=10000",
@@ -467,10 +712,9 @@ function createOrchestratorService(options = {}) {
         "## Package values",
         `- Worker token: \`${record.workerToken}\``,
         `- Backend URL: \`${record.backendUrl}\``,
-        `- Workspace ID: \`${record.workspaceId}\``,
-        `- Node lane: \`${record.lane}\``,
         `- Node name: \`${record.workerName}\``,
-        `- Max allocation percent: \`${record.maxAllocPercent}\``,
+        "- Workspace assignment: automatic after agent registration",
+        "- Lane detection: automatic from reported GPU metadata",
         "",
         "## Steps",
         "1. Copy the `agent/` folder to the provider machine.",
@@ -479,9 +723,10 @@ function createOrchestratorService(options = {}) {
         "4. Run `npm install`.",
         "5. Run `npm start`.",
         "",
-        "## Demo notes",
-        "- Non-GPU machines can still join the workspace for local and chunked demo jobs.",
-        "- Jobs with `requires_gpu=true` only match GPU-capable nodes in the same workspace and lane.",
+        "## Product notes",
+        "- A node is a provider machine running the CampusCloud agent.",
+        "- The backend detects the node lane from GPU memory and assigns the node into a workspace slot.",
+        "- Workspaces become complete when low, mid, and high lane nodes are all present.",
         `- If the node misses heartbeats for more than ${Math.round(heartbeatTimeoutMs / 1000)} seconds, the backend marks it offline and fails its active jobs.`,
       ].join("\n"),
     };
@@ -515,14 +760,6 @@ function createOrchestratorService(options = {}) {
     ).trim();
     const ownerName = String(payload.owner_name || payload.ownerName || "").trim();
     const tags = normalizeTags(payload.tags || payload.worker_tags || ["windows", "hackathon"]);
-    const workspaceId = normalizeWorkspaceId(payload.workspace_id || payload.workspaceId, defaultWorkspaceId);
-    const lane = normalizeLane(payload.node_lane || payload.lane, JOB_LANES.LOW);
-    const maxAllocPercent = clampNumber(
-      payload.max_alloc_percent || payload.maxAllocPercent,
-      1,
-      100,
-      defaultMaxAllocPercent
-    );
     const allowDocker = parseBoolean(payload.allow_docker ?? payload.allowDocker, true);
     const baseWorkerId = slugify(payload.worker_id || payload.workerId || workerName) || "workspace-node";
 
@@ -538,9 +775,6 @@ function createOrchestratorService(options = {}) {
       workerId,
       workerName,
       ownerName,
-      workspaceId,
-      lane,
-      maxAllocPercent,
       allowDocker,
       tags,
       workerToken,
@@ -555,10 +789,7 @@ function createOrchestratorService(options = {}) {
       ...toPublicOnboarding(record),
       workerToken,
       backendUrl: record.backendUrl,
-      workspaceId: record.workspaceId,
-      lane: record.lane,
       nodeName: record.workerName,
-      maxAllocPercent: record.maxAllocPercent,
       envFile: getOnboardingEnvFile(workerId, workerToken),
       setupScript: getOnboardingSetupScript(workerId, workerToken),
       setupGuide: getOnboardingGuideFile(workerId, workerToken),
@@ -663,27 +894,27 @@ function createOrchestratorService(options = {}) {
       throw new Error("image is required");
     }
 
-    const workspaceId = normalizeWorkspaceId(
-      overrides.workspace_id ?? payload.workspace_id ?? payload.workspaceId,
-      defaultWorkspaceId
-    );
+    const workspaceId = String(overrides.workspace_id ?? payload.workspace_id ?? payload.workspaceId ?? "").trim();
+    if (!workspaceId) {
+      throw new Error("workspace_id is required");
+    }
+    if (!getWorkspaceRecord(workspaceId)) {
+      throw new Error(`Workspace ${workspaceId} does not exist`);
+    }
+
     const commandArgs = normalizeCommand(overrides.command ?? payload.command ?? DEFAULT_COMMAND);
     const normalizedCommandArgs = commandArgs.length ? commandArgs : clone(DEFAULT_COMMAND);
-    const rawChunkCount = Number(overrides.chunk_count ?? payload.chunk_count ?? payload.chunkCount ?? 1);
+    const rawChunkCount = Number(
+      overrides.chunk_count ?? payload.internal_chunk_count ?? payload.metadata?.internal_chunk_count ?? 1
+    );
     const chunkCount = Math.max(1, Math.floor(rawChunkCount) || 1);
     const requiresGpu = parseBoolean(
       overrides.requires_gpu ?? payload.requires_gpu ?? payload.resource_requirements?.gpu_required,
       false
     );
-    const laneRequired = normalizeLane(
+    const requestedLane = normalizeLane(
       overrides.lane_required ?? payload.lane_required ?? payload.laneRequired,
       null
-    );
-    const estimatedGpuPercent = clampNumber(
-      overrides.estimated_gpu_percent ?? payload.estimated_gpu_percent ?? payload.estimatedGpuPercent,
-      0,
-      100,
-      requiresGpu ? 25 : 0
     );
     const executionMode = normalizeExecutionMode(
       overrides.execution_mode ?? payload.execution_mode,
@@ -693,9 +924,17 @@ function createOrchestratorService(options = {}) {
       payload.resource_requirements || {},
       {
         gpu_required: requiresGpu,
-        min_gpu_memory_mb: laneRequired === JOB_LANES.HIGH ? 20000 : laneRequired === JOB_LANES.MID ? 10000 : 0,
       }
     );
+    const minimumLane = requestedLane || (requiresGpu ? inferLaneFromVram(resourceRequirements.min_gpu_memory_mb) : null);
+    const candidateLanes = getPreferredLaneOrder(minimumLane);
+    const estimatedGpuPercent = requiresGpu
+      ? minimumLane === JOB_LANES.HIGH
+        ? 50
+        : minimumLane === JOB_LANES.MID
+          ? 35
+          : 25
+      : 0;
 
     return {
       id: overrides.id || payload.job_id || payload.jobId || randomUUID(),
@@ -706,8 +945,10 @@ function createOrchestratorService(options = {}) {
       command_args: clone(normalizedCommandArgs),
       env: payload.env && typeof payload.env === "object" && !Array.isArray(payload.env) ? clone(payload.env) : {},
       requires_gpu: requiresGpu,
-      lane_required: laneRequired,
+      lane_required: minimumLane,
+      candidate_lanes: candidateLanes,
       estimated_gpu_percent: estimatedGpuPercent,
+      queue_reason: null,
       chunk_count: chunkCount,
       parent_job_id: overrides.parent_job_id || null,
       chunk_index: Number.isInteger(overrides.chunk_index) ? overrides.chunk_index : null,
@@ -731,11 +972,45 @@ function createOrchestratorService(options = {}) {
   }
 
   function emitJobSubmit(job) {
-    emit(EVENT_TYPES.JOB_SUBMIT, { job: toPublicJob(job) });
+    emit(EVENT_TYPES.JOB_SUBMIT, {
+      job: toPublicJob(job),
+      workspace: getPublicWorkspace(job.workspace_id),
+    });
+  }
+
+  function getQueueReason(job) {
+    const workspace = getWorkspaceRecord(job.workspace_id);
+    if (!workspace) {
+      return "Selected workspace is not available";
+    }
+
+    const candidateNodeIds = (job.candidate_lanes || [])
+      .map((lane) => workspace[`${lane}_node_id`])
+      .filter(Boolean);
+
+    if (!candidateNodeIds.length) {
+      return job.requires_gpu
+        ? `Waiting for a ${job.lane_required || "gpu"} lane node in ${job.workspace_id}`
+        : `Waiting for a provider node in ${job.workspace_id}`;
+    }
+
+    const onlineCandidates = candidateNodeIds
+      .map((nodeId) => store.nodes.get(nodeId))
+      .filter(Boolean)
+      .filter((node) => getNodeDerived(node).status !== NODE_STATUS.OFFLINE);
+
+    if (!onlineCandidates.length) {
+      return `Waiting for an online provider in ${job.workspace_id}`;
+    }
+
+    return `Waiting for backend capacity in ${job.workspace_id}`;
   }
 
   function createJob(payload = {}) {
-    const chunkCount = Math.max(1, Math.floor(Number(payload.chunk_count ?? payload.chunkCount ?? 1) || 1));
+    const chunkCount = Math.max(
+      1,
+      Math.floor(Number(payload.internal_chunk_count ?? payload.metadata?.internal_chunk_count ?? 1) || 1)
+    );
 
     if (chunkCount <= 1) {
       const job = createCanonicalJob(payload);
@@ -743,6 +1018,7 @@ function createOrchestratorService(options = {}) {
         throw new Error(`Job ${job.id} already exists`);
       }
 
+      job.queue_reason = getQueueReason(job);
       store.jobs.set(job.id, job);
       store.queue.enqueue(job.id);
       emitJobSubmit(job);
@@ -764,6 +1040,7 @@ function createOrchestratorService(options = {}) {
       throw new Error(`Job ${parent.id} already exists`);
     }
 
+    parent.queue_reason = getQueueReason(parent);
     store.jobs.set(parent.id, parent);
     emitJobSubmit(parent);
 
@@ -779,6 +1056,7 @@ function createOrchestratorService(options = {}) {
         status: JOB_STATUS.QUEUED,
       });
 
+      child.queue_reason = getQueueReason(child);
       store.jobs.set(child.id, child);
       store.queue.enqueue(child.id);
       parent.child_job_ids.push(child.id);
@@ -796,15 +1074,29 @@ function createOrchestratorService(options = {}) {
   }
 
   function getBestNodeForJob(job) {
+    const workspace = getWorkspaceRecord(job.workspace_id);
+    if (!workspace) {
+      return null;
+    }
+
     return (
-      Array.from(store.nodes.values())
+      (job.candidate_lanes || [])
+        .map((lane) => workspace[`${lane}_node_id`])
+        .filter(Boolean)
+        .map((nodeId) => store.nodes.get(nodeId))
+        .filter(Boolean)
         .map((node) => ({ node, derived: getNodeDerived(node) }))
-        .filter(({ node }) => node.status !== NODE_STATUS.OFFLINE)
-        .filter(({ node }) => node.workspace_id === job.workspace_id)
-        .filter(({ derived }) => !job.lane_required || derived.lane === job.lane_required)
+        .filter(({ derived }) => derived.status !== NODE_STATUS.OFFLINE)
         .filter(({ derived }) => !job.requires_gpu || derived.gpu_available)
         .filter(({ node, derived }) => derived.current_alloc_percent + job.estimated_gpu_percent <= node.max_alloc_percent)
         .sort((left, right) => {
+          const leftLaneIndex = (job.candidate_lanes || []).indexOf(left.derived.lane);
+          const rightLaneIndex = (job.candidate_lanes || []).indexOf(right.derived.lane);
+          const laneDelta = leftLaneIndex - rightLaneIndex;
+          if (laneDelta !== 0) {
+            return laneDelta;
+          }
+
           const idleDelta = (left.node.status === NODE_STATUS.IDLE ? 0 : 1) - (right.node.status === NODE_STATUS.IDLE ? 0 : 1);
           if (idleDelta !== 0) {
             return idleDelta;
@@ -842,6 +1134,7 @@ function createOrchestratorService(options = {}) {
       job.updated_at = nowIso();
       job.delivery_status = "complete";
       job.error = reason;
+      job.queue_reason = null;
       job.result = {
         ...(job.result || {}),
         error: reason,
@@ -878,6 +1171,8 @@ function createOrchestratorService(options = {}) {
     for (const job of store.jobs.values()) {
       if (job.is_parent) {
         syncParentJob(job.id, emitEvents);
+      } else if (job.status === JOB_STATUS.QUEUED) {
+        job.queue_reason = getQueueReason(job);
       }
     }
   }
@@ -894,6 +1189,7 @@ function createOrchestratorService(options = {}) {
 
       const node = getBestNodeForJob(job);
       if (!node) {
+        job.queue_reason = getQueueReason(job);
         continue;
       }
 
@@ -901,6 +1197,7 @@ function createOrchestratorService(options = {}) {
       job.node_id = node.node_id;
       job.delivery_status = "pending";
       job.updated_at = nowIso();
+      job.queue_reason = null;
       store.queue.remove(jobId);
 
       syncNodeState(node, {
@@ -922,29 +1219,20 @@ function createOrchestratorService(options = {}) {
     const current = store.nodes.get(nodeId);
     const onboardingRecord = getOnboardingRecord(nodeId);
     const gpu = safeClone(payload.gpu || current?.gpu || DEFAULT_GPU_INFO, DEFAULT_GPU_INFO);
-    const gpuList = pickGpuList(gpu);
-    const inferredLane = gpu.gpu_available
-      ? inferLaneFromVram(gpuList.reduce((max, item) => Math.max(max, Number(item?.memory_mb) || 0), 0))
-      : JOB_LANES.LOW;
+    const classification = classifyLaneFromGpu(gpu);
     const timestamp = nowIso();
 
     const node = {
       node_id: nodeId,
-      workspace_id: normalizeWorkspaceId(
-        payload.workspace_id || onboardingRecord?.workspaceId || current?.workspace_id,
-        defaultWorkspaceId
-      ),
+      workspace_id: current?.workspace_id || null,
       name: String(payload.node_name || payload.worker_name || current?.name || payload.hostname || nodeId).trim(),
       hostname: payload.hostname || current?.hostname || nodeId,
-      lane: normalizeLane(payload.node_lane || payload.lane || onboardingRecord?.lane || current?.lane, inferredLane),
+      lane: classification.lane,
+      lane_status: classification.lane_status,
+      classification_reason: classification.classification_reason,
       status: current?.status || NODE_STATUS.IDLE,
       current_job_id: current?.current_job_id || null,
-      max_alloc_percent: clampNumber(
-        payload.max_alloc_percent || onboardingRecord?.maxAllocPercent || current?.max_alloc_percent,
-        1,
-        100,
-        defaultMaxAllocPercent
-      ),
+      max_alloc_percent: defaultMaxAllocPercent,
       allow_docker: parseBoolean(
         payload.allow_docker ?? onboardingRecord?.allowDocker ?? current?.allow_docker,
         true
@@ -965,6 +1253,7 @@ function createOrchestratorService(options = {}) {
       offline_reason: null,
     };
 
+    assignNodeToWorkspace(node);
     store.nodes.set(nodeId, node);
     syncNodeState(node, {
       emit: false,
@@ -989,12 +1278,6 @@ function createOrchestratorService(options = {}) {
     }
 
     node.lastHeartbeatAt = payload.timestamp || nowIso();
-    if (payload.node_lane) {
-      node.lane = normalizeLane(payload.node_lane, node.lane);
-    }
-    if (payload.workspace_id) {
-      node.workspace_id = normalizeWorkspaceId(payload.workspace_id, node.workspace_id);
-    }
 
     syncNodeState(node, {
       emit: false,
@@ -1017,6 +1300,14 @@ function createOrchestratorService(options = {}) {
     return Array.from(store.nodes.values())
       .sort((left, right) => getTimeMs(right.lastHeartbeatAt) - getTimeMs(left.lastHeartbeatAt))
       .map(toPublicNode);
+  }
+
+  function listWorkspaces() {
+    reconcileClusterState({ emitEvents: false });
+
+    return Array.from(store.workspaces.values())
+      .sort((left, right) => getTimeMs(left.createdAt) - getTimeMs(right.createdAt))
+      .map(toPublicWorkspace);
   }
 
   function listJobs() {
@@ -1108,6 +1399,7 @@ function createOrchestratorService(options = {}) {
     job.status = payload.status;
     job.updated_at = payload.timestamp || nowIso();
     job.node_id = payload.worker_id || job.node_id || null;
+    job.queue_reason = null;
     if (JOB_TERMINAL_STATUSES.has(payload.status)) {
       job.delivery_status = "complete";
     }
@@ -1198,6 +1490,7 @@ function createOrchestratorService(options = {}) {
     runMaintenanceSweep,
     reconcileClusterState,
     listNodes,
+    listWorkspaces,
     listOnboardingNodes,
     createOnboardingNode,
     getOnboardingEnvFile,

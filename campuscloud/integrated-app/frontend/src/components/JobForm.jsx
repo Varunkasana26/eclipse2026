@@ -13,9 +13,7 @@ const jobPresets = {
     commandText: defaultCommand,
     executionMode: 'local',
     requiresGpu: false,
-    laneRequired: '',
-    estimatedGpuPercent: 0,
-    chunkCount: 1,
+    gpuProfile: 'any',
     envText: '{}',
   },
   docker: {
@@ -23,9 +21,7 @@ const jobPresets = {
     commandText: dockerDemoCommand,
     executionMode: 'docker',
     requiresGpu: false,
-    laneRequired: '',
-    estimatedGpuPercent: 0,
-    chunkCount: 1,
+    gpuProfile: 'any',
     envText: '{}',
   },
   gpu: {
@@ -33,14 +29,12 @@ const jobPresets = {
     commandText: 'python -c "print(\'gpu-ready demo\')"',
     executionMode: 'docker',
     requiresGpu: true,
-    laneRequired: 'mid',
-    estimatedGpuPercent: 40,
-    chunkCount: 1,
+    gpuProfile: 'mid',
     envText: '{}',
   },
 };
 
-function JobForm({ form, setForm, onSubmit, isSubmitting, submitError }) {
+function JobForm({ form, setForm, onSubmit, isSubmitting, submitError, workspaces }) {
   function applyPreset(presetKey) {
     const preset = jobPresets[presetKey];
     if (!preset) {
@@ -57,7 +51,7 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError }) {
     <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6">
       <div className="flex items-center gap-3 mb-5">
         <Play className="w-5 h-5 text-cyan-300" />
-        <h2 className="text-xl font-semibold">Submit Scheduler Job</h2>
+        <h2 className="text-xl font-semibold">Submit Workspace Job</h2>
       </div>
       <div className="flex flex-wrap gap-3 mb-5">
         <button type="button" onClick={() => applyPreset('local')} className="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-2 text-sm text-slate-100">
@@ -74,12 +68,20 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError }) {
         <div className="grid sm:grid-cols-2 gap-4">
           <label className="block">
             <span className="block text-sm text-slate-300 mb-2">Workspace ID</span>
-            <input
+            <select
               value={form.workspaceId}
               onChange={(event) => setForm((current) => ({ ...current, workspaceId: event.target.value }))}
               className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
-              placeholder="demo-workspace"
-            />
+            >
+              {workspaces.length === 0 ? (
+                <option value="">No workspace available</option>
+              ) : null}
+              {workspaces.map((workspace) => (
+                <option key={workspace.id} value={workspace.id}>
+                  {workspace.id} ({workspace.status})
+                </option>
+              ))}
+            </select>
           </label>
           <label className="block">
             <span className="block text-sm text-slate-300 mb-2">Execution Mode</span>
@@ -124,47 +126,25 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError }) {
                 setForm((current) => ({
                   ...current,
                   requiresGpu: event.target.checked,
-                  estimatedGpuPercent: event.target.checked ? Math.max(10, current.estimatedGpuPercent) : 0,
+                  gpuProfile: event.target.checked ? current.gpuProfile : 'any',
                 }))
               }
               className="w-4 h-4 rounded border-slate-600 bg-slate-900"
             />
             <span className="text-sm text-slate-300">Requires GPU</span>
           </label>
-          <label className="block">
-            <span className="block text-sm text-slate-300 mb-2">Lane Required</span>
+          <label className="block lg:col-span-3">
+            <span className="block text-sm text-slate-300 mb-2">Minimum GPU profile</span>
             <select
-              value={form.laneRequired}
-              onChange={(event) => setForm((current) => ({ ...current, laneRequired: event.target.value }))}
+              value={form.gpuProfile}
+              onChange={(event) => setForm((current) => ({ ...current, gpuProfile: event.target.value }))}
+              disabled={!form.requiresGpu}
               className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
             >
-              <option value="">Auto</option>
-              <option value="low">Low</option>
-              <option value="mid">Mid</option>
-              <option value="high">High</option>
+              <option value="any">Any GPU</option>
+              <option value="mid">Mid memory GPU (10GB+)</option>
+              <option value="high">High memory GPU (20GB+)</option>
             </select>
-          </label>
-          <label className="block">
-            <span className="block text-sm text-slate-300 mb-2">GPU %</span>
-            <input
-              type="number"
-              min="0"
-              max="100"
-              value={form.estimatedGpuPercent}
-              onChange={(event) => setForm((current) => ({ ...current, estimatedGpuPercent: Number(event.target.value) || 0 }))}
-              className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
-            />
-          </label>
-          <label className="block">
-            <span className="block text-sm text-slate-300 mb-2">Chunk Count</span>
-            <input
-              type="number"
-              min="1"
-              max="12"
-              value={form.chunkCount}
-              onChange={(event) => setForm((current) => ({ ...current, chunkCount: Number(event.target.value) || 1 }))}
-              className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
-            />
           </label>
         </div>
 
@@ -185,11 +165,11 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError }) {
           </div>
         ) : null}
         <p className="text-xs text-slate-400">
-          Lane selection always stays inside the workspace. GPU-required jobs only match GPU-capable nodes; everything else can run on non-GPU machines.
+          The backend assigns the job to the best node in the selected workspace and keeps queueing and capacity limits internal.
         </p>
         <button
           type="submit"
-          disabled={isSubmitting}
+          disabled={isSubmitting || !form.workspaceId}
           className="inline-flex items-center gap-2 rounded-2xl bg-cyan-400 text-slate-950 font-semibold px-5 py-3 disabled:opacity-60"
         >
           <TerminalSquare className="w-4 h-4" />
