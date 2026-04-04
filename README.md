@@ -1,61 +1,103 @@
-# CampusCloud Worker Agent
+# Eclipse2026 Hackathon Repo
 
-This workspace now contains:
+This repository now contains both the original remote project and the CampusCloud worker-side additions merged into one branch.
 
-- `src/`: the GPU-aware CampusCloud worker agent
-- `campuscloud-execution-service/`: the localhost-only Docker execution service
-- `campuscloud-backend-additions/`: backend scheduler, routes, and payload examples
+## Main parts
 
-The worker agent never runs Docker directly. It registers with the backend over HTTP and delegates execution to `http://127.0.0.1:8000`.
+- `backend/`
+  Existing Python containerized execution backend from the remote repository
+- `Backend/`
+  Existing Node/Prisma lab-booking backend from the remote repository
+- `src/`
+  CampusCloud Worker Node Agent
+- `campuscloud-execution-service/`
+  Local execution service for the worker machine
+- `campuscloud-backend-additions/`
+  Worker scheduling and payload examples for backend integration
 
-## Worker env
+## CampusCloud worker architecture
+
+The Worker Node Agent does not run Docker directly. It:
+
+- registers with the backend over HTTP
+- sends heartbeats every 5 seconds
+- polls for jobs every few seconds
+- marks itself busy while a job is running
+- delegates execution to the local service on `http://127.0.0.1:8000`
+- forwards `running`, `completed`, and `failed` updates
+- returns logs and result metadata
+
+## Worker agent files
+
+- `package.json`
+- `.env.example`
+- `src/index.js`
+- `src/config.js`
+- `src/systemInfo.js`
+- `src/api.js`
+- `src/agent.js`
+- `src/executors/mockExecutor.js`
+- `src/executors/httpExecutor.js`
+- `src/utils/logger.js`
+
+## Worker agent env
 
 ```env
-BACKEND_URL=http://your-backend-url
-WORKER_SECRET=your-shared-secret
-EXECUTOR_MODE=http
-EXECUTOR_URL=http://127.0.0.1:8000
+NODE_ENV=development
+BACKEND_BASE_URL=http://127.0.0.1:5000
+BACKEND_API_KEY=
+WORKER_ID=
+WORKER_NAME=worker-laptop-01
+WORKER_TAGS=hackathon,dev
+HEARTBEAT_INTERVAL_MS=5000
+POLL_INTERVAL_MS=4000
+REQUEST_TIMEOUT_MS=10000
+EXECUTOR_MODE=mock
+EXECUTOR_BASE_URL=http://127.0.0.1:8000
+MOCK_JOB_DURATION_MS=6000
+MOCK_LOG_INTERVAL_MS=1000
 ```
 
-## Execution service env
+## Worker modes
 
-```env
-PORT=8000
-GPU_DEVICE=all
-MAX_CONCURRENT_JOBS=2
-```
+- `EXECUTOR_MODE=mock`
+  Laptop-friendly development mode with simulated logs and results
+- `EXECUTOR_MODE=http`
+  Real worker mode using the local execution service
 
-## Runtime flow
+## Local execution service
 
-- backend -> `POST /api/workers/register`
-- backend -> `POST /api/workers/heartbeat`
-- backend -> `GET /api/workers/:worker_id/next-job`
-- worker -> `POST http://127.0.0.1:8000/execute`
-- worker -> `GET http://127.0.0.1:8000/status/:job_id`
-- worker -> `POST http://127.0.0.1:8000/cancel/:job_id`
+Expected local endpoints:
 
-## Windows + NVIDIA GPU
+- `GET /health`
+- `GET /jobs`
+- `POST /run`
 
-1. Run in PowerShell as Admin: `wsl --install`, then reboot.
-2. Install Docker Desktop with the WSL2 backend enabled.
-3. In Docker Desktop, enable Ubuntu under WSL Integration.
-4. Update the Windows NVIDIA driver from NVIDIA.
-5. Open WSL2 Ubuntu and run `nvidia-smi`.
-6. Install `nvidia-container-toolkit`, run `sudo nvidia-ctk runtime configure --runtime=docker`, and restart Docker Desktop.
-7. Install Node.js 20 in WSL2.
-8. Copy the project into WSL2.
-9. Start `campuscloud-execution-service` in one terminal and the worker agent in another.
-10. Verify with `curl http://127.0.0.1:8000/health`.
+The execution service owns:
 
-## Linux / cloud VM
+- Docker execution
+- optional GPU access
+- sandbox flags
+- log capture
+- output file creation
+- cleanup
 
-1. Run `sudo bash campuscloud-execution-service/setup-gpu-worker.sh`.
-2. Start `campuscloud-execution-service`.
-3. Start the worker agent.
+## GPU notes
 
-## GPU-ready images
+GPU access should be configured on the worker host and used by the local execution service, not the Worker Node Agent.
 
-- `nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04`
-- `pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime`
-- `tensorflow/tensorflow:2.15.0-gpu`
-- `nvcr.io/nvidia/pytorch:24.01-py3`
+For NVIDIA-backed workers:
+
+1. Install the NVIDIA driver on the host
+2. Install Docker or Docker Desktop
+3. Install NVIDIA Container Toolkit
+4. Configure Docker runtime with `nvidia-ctk runtime configure --runtime=docker`
+5. Restart Docker
+6. Verify container GPU access with `nvidia-smi`
+
+## Push-safe notes
+
+- `.env` is ignored for the worker agent
+- `node_modules/` is ignored
+- zip artifacts are ignored
+- Python virtualenv and cache files are ignored
