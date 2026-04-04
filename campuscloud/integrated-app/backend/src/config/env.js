@@ -24,6 +24,10 @@ module.exports = {
   DEFAULT_WORKSPACE_ID: process.env.DEFAULT_WORKSPACE_ID || "demo-workspace",
   DEFAULT_MAX_ALLOC_PERCENT: parseNumber(process.env.DEFAULT_MAX_ALLOC_PERCENT, 70),
   WORKER_SECRET: process.env.WORKER_SECRET || "",
+  SUPABASE_URL: process.env.SUPABASE_URL || "",
+  SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
+  SUPABASE_STATE_TABLE: process.env.SUPABASE_STATE_TABLE || "cluster_state_snapshots",
+  BACKEND_INSTANCE_KEY: process.env.BACKEND_INSTANCE_KEY || "campuscloud-dev",
   ARTIFACT_STORAGE_DIR:
     process.env.ARTIFACT_STORAGE_DIR || path.resolve(__dirname, "..", "..", "storage"),
   MAX_ASSET_UPLOAD_BYTES: parseNumber(process.env.MAX_ASSET_UPLOAD_BYTES, 100 * 1024 * 1024),

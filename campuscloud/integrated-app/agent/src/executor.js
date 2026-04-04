@@ -1,6 +1,7 @@
 import config from "./config.js";
-import { extractPythonCodeFromJob, runDockerJob } from "./dockerRunner.js";
+import { runDockerJob } from "./dockerRunner.js";
 import { runLocalJob, runSimulatedJob } from "./fallbackRunner.js";
+import { extractPythonCodeFromJob, runRemoteGpuJob } from "./remoteGpuRunner.js";
 import { runRenderJob } from "./renderRunner.js";
 import logger from "./utils/logger.js";
 
@@ -17,8 +18,8 @@ function shouldUseGpuRunner(job) {
   return (
     Boolean(extractPythonCodeFromJob(job)) &&
     (
-      requestedMode === "docker" ||
       requestedMode === "gpu" ||
+      requestedMode === "remote-gpu" ||
       Boolean(job.resource_requirements?.gpu_required)
     )
   );
@@ -56,8 +57,12 @@ async function runJob(job, hooks = {}, context = {}) {
     return runRenderJob(job, hooks, context);
   }
 
+  if (requestedMode === "docker") {
+    return runDockerJob(job, hooks);
+  }
+
   if (shouldUseGpuRunner(job)) {
-    const remoteResult = await runDockerJob(job, hooks);
+    const remoteResult = await runRemoteGpuJob(job, hooks);
     if (
       remoteResult.status === "completed" ||
       remoteResult.result?.infrastructure_failure === false
@@ -85,13 +90,6 @@ async function runJob(job, hooks = {}, context = {}) {
         gpu_server_url: config.gpuServerUrl,
       },
     };
-  }
-
-  if (requestedMode === "docker") {
-    await emitFallbackLog(
-      hooks,
-      `Docker mode requested for job ${job.job_id}, but only Python GPU tasks are routed remotely. Falling back to local execution.`
-    );
   }
 
   return runLocalJob(job, hooks);

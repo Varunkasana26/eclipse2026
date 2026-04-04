@@ -126,6 +126,12 @@ const config = {
   gpuRequestRetries: Math.max(0, parseNumber(process.env.GPU_REQUEST_RETRIES, 1)),
   maxGpuCodeLength: Math.max(1, parseNumber(process.env.MAX_GPU_CODE_LENGTH, 20000)),
   executorMode: (process.env.EXECUTOR_MODE || "auto").toLowerCase(),
+  startupRequireDocker: parseBoolean(process.env.STARTUP_REQUIRE_DOCKER, false),
+  startupRequireGpuDocker: parseBoolean(process.env.STARTUP_REQUIRE_GPU_DOCKER, false),
+  dockerHealthCheckImage: process.env.DOCKER_HEALTHCHECK_IMAGE || "python:3.10-slim",
+  gpuHealthCheckImage:
+    process.env.GPU_HEALTHCHECK_IMAGE || "nvidia/cuda:12.2.0-runtime-ubuntu22.04",
+  healthCheckTimeoutMs: parseNumber(process.env.HEALTHCHECK_TIMEOUT_MS, 120000),
   mockJobDurationMs: parseNumber(process.env.MOCK_JOB_DURATION_MS, 6000),
   mockLogIntervalMs: parseNumber(process.env.MOCK_LOG_INTERVAL_MS, 1000)
 };
