@@ -1,0 +1,16 @@
+{
+  "name": "campuscloud-integrated-app",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "agent",
+    "frontend"
+  ],
+  "scripts": {
+    "install:all": "npm install --workspaces",
+    "backend": "npm run start --workspace backend",
+    "agent": "npm run start --workspace agent",
+    "frontend": "npm run start --workspace frontend"
+  }
+}
