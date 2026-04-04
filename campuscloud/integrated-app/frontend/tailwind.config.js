@@ -7,6 +7,12 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        space: {
+          bg: '#050505',
+          card: '#0f0f0f',
+          accent: '#0055ff',
+          secondary: '#ef4444',
+        },
         primary: {
           50: '#eff6ff',
           100: '#dbeafe',
@@ -19,6 +25,10 @@ module.exports = {
           800: '#1e40af',
           900: '#1e3a8a',
         }
+      },
+      fontFamily: {
+        sans: ['"Space Grotesk"', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'monospace'],
       }
     },
   },

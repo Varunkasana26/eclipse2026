@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { Play, TerminalSquare } from 'lucide-react';
 
 const defaultCommand =
