@@ -4,6 +4,7 @@ const { createStore } = require("../models/store");
 const {
   EVENT_TYPES,
   EXECUTION_MODE,
+  JOB_TYPE,
   JOB_LANES,
   JOB_STATUS,
   JOB_TERMINAL_STATUSES,
@@ -14,6 +15,7 @@ const {
   clone,
   normalizeCommand,
   normalizeExecutionMode,
+  normalizeJobType,
   normalizeLane,
   normalizeResourceRequirements,
   normalizeTags,
@@ -88,6 +90,18 @@ function summarizeGpu(node) {
   }
 
   return `${node.gpu_name} ${Number(((node.vram_mb || 0) / 1024).toFixed(0))}GB`;
+}
+
+function isRenderJob(job) {
+  return normalizeJobType(job?.metadata?.job_type, JOB_TYPE.DEFAULT) === JOB_TYPE.RENDER;
+}
+
+function isAwaitingRenderAssets(job) {
+  return (
+    isRenderJob(job) &&
+    parseBoolean(job?.metadata?.asset_upload_expected, false) &&
+    !parseBoolean(job?.metadata?.assets_ready, false)
+  );
 }
 
 function safeClone(value, fallback) {
@@ -926,6 +940,20 @@ function createOrchestratorService(options = {}) {
         gpu_required: requiresGpu,
       }
     );
+    const metadata = payload.metadata && typeof payload.metadata === "object" ? clone(payload.metadata) : {};
+    if (metadata.job_type) {
+      metadata.job_type = normalizeJobType(metadata.job_type);
+    }
+    if (Array.isArray(metadata.input_artifacts)) {
+      metadata.input_artifacts = clone(metadata.input_artifacts);
+    } else {
+      metadata.input_artifacts = [];
+    }
+    if (metadata.job_type === JOB_TYPE.RENDER) {
+      const assetUploadExpected = parseBoolean(metadata.asset_upload_expected, metadata.input_artifacts.length > 0);
+      metadata.asset_upload_expected = assetUploadExpected;
+      metadata.assets_ready = parseBoolean(metadata.assets_ready, !assetUploadExpected);
+    }
     const minimumLane = requestedLane || (requiresGpu ? inferLaneFromVram(resourceRequirements.min_gpu_memory_mb) : null);
     const candidateLanes = getPreferredLaneOrder(minimumLane);
     const estimatedGpuPercent = requiresGpu
@@ -965,7 +993,7 @@ function createOrchestratorService(options = {}) {
       execution_mode: executionMode,
       executionMode: executionMode,
       resourceRequirements,
-      metadata: payload.metadata && typeof payload.metadata === "object" ? clone(payload.metadata) : {},
+      metadata,
       is_parent: Boolean(overrides.is_parent),
       child_job_ids: safeClone(overrides.child_job_ids, []),
     };
@@ -979,6 +1007,10 @@ function createOrchestratorService(options = {}) {
   }
 
   function getQueueReason(job) {
+    if (isAwaitingRenderAssets(job)) {
+      return "Waiting for render asset upload";
+    }
+
     const workspace = getWorkspaceRecord(job.workspace_id);
     if (!workspace) {
       return "Selected workspace is not available";
@@ -1184,6 +1216,11 @@ function createOrchestratorService(options = {}) {
       const job = store.jobs.get(jobId);
       if (!job || job.is_parent || job.status !== JOB_STATUS.QUEUED) {
         store.queue.remove(jobId);
+        continue;
+      }
+
+      if (isAwaitingRenderAssets(job)) {
+        job.queue_reason = getQueueReason(job);
         continue;
       }
 
@@ -1480,6 +1517,39 @@ function createOrchestratorService(options = {}) {
     return toPublicJob(job);
   }
 
+  function addJobInputArtifact(jobId, artifact = {}, options = {}) {
+    const job = store.jobs.get(jobId);
+    if (!job) {
+      throw new Error("Job not found");
+    }
+
+    if (!job.metadata || typeof job.metadata !== "object") {
+      job.metadata = {};
+    }
+
+    if (!Array.isArray(job.metadata.input_artifacts)) {
+      job.metadata.input_artifacts = [];
+    }
+
+    job.metadata.input_artifacts.push(clone(artifact));
+    if (Object.prototype.hasOwnProperty.call(options, "complete")) {
+      job.metadata.asset_upload_expected = true;
+      job.metadata.assets_ready = Boolean(options.complete);
+    }
+
+    job.updated_at = nowIso();
+    job.queue_reason = getQueueReason(job);
+
+    emitJobEvent(EVENT_TYPES.JOB_UPDATE, job, job.node_id ? store.nodes.get(job.node_id) : null, "job-asset");
+    syncParentJob(job.parent_job_id, true);
+
+    if (parseBoolean(job.metadata.assets_ready, false)) {
+      assignQueuedJobs();
+    }
+
+    return toPublicJob(job);
+  }
+
   function runMaintenanceSweep() {
     assignQueuedJobs();
   }
@@ -1506,6 +1576,7 @@ function createOrchestratorService(options = {}) {
     updateJobStatus,
     appendJobLogs,
     setJobResult,
+    addJobInputArtifact,
   };
 }
 

@@ -38,6 +38,27 @@ async function request(path, options = {}) {
   return data;
 }
 
+async function requestBinary(path, { body, headers = {}, method = 'POST' } = {}) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers,
+    body,
+  });
+
+  const text = await response.text();
+  const data = parseResponseBody(text);
+
+  if (!response.ok) {
+    throw new Error(
+      typeof data === 'object' && data !== null
+        ? data.error || data.message || `${response.status} ${response.statusText}`
+        : data || `${response.status} ${response.statusText}`
+    );
+  }
+
+  return data;
+}
+
 async function fetchNodes() {
   return request('/api/nodes');
 }
@@ -72,6 +93,20 @@ async function createOnboardingNode(payload) {
   });
 }
 
+async function uploadJobAsset(jobId, file, options = {}) {
+  const complete = Boolean(options.complete);
+  return requestBinary(`/api/jobs/${encodeURIComponent(jobId)}/assets`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'X-File-Name': encodeURIComponent(file?.name || 'asset.bin'),
+      'X-Content-Type': file?.type || 'application/octet-stream',
+      ...(complete ? { 'X-Upload-Complete': 'true' } : {}),
+    },
+    body: file,
+  });
+}
+
 export {
   API_BASE,
   createOnboardingNode,
@@ -81,4 +116,5 @@ export {
   fetchOnboardingNodes,
   fetchWorkspaces,
   submitJob,
+  uploadJobAsset,
 };

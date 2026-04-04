@@ -34,6 +34,12 @@ const EXECUTION_MODE = {
   MOCK: "mock",
 };
 
+const JOB_TYPE = {
+  DEFAULT: "default",
+  PYTHON: "python",
+  RENDER: "render",
+};
+
 const JOB_LANES = {
   LOW: "low",
   MID: "mid",
@@ -101,6 +107,11 @@ function normalizeExecutionMode(mode, fallback = EXECUTION_MODE.LOCAL) {
 function normalizeLane(value, fallback = null) {
   const normalized = String(value || "").trim().toLowerCase();
   return Object.values(JOB_LANES).includes(normalized) ? normalized : fallback;
+}
+
+function normalizeJobType(value, fallback = JOB_TYPE.DEFAULT) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return Object.values(JOB_TYPE).includes(normalized) ? normalized : fallback;
 }
 
 function tokenizeCommand(command) {
@@ -227,6 +238,11 @@ function buildJobStatusPayload({ workerId, status, extra = {} }) {
 }
 
 function buildAgentJobPayload(job) {
+  const metadata = clone(job.metadata || {});
+  if (metadata.job_type) {
+    metadata.job_type = normalizeJobType(metadata.job_type);
+  }
+
   return {
     job_id: job.id,
     parent_job_id: job.parent_job_id || null,
@@ -244,7 +260,7 @@ function buildAgentJobPayload(job) {
       gpu_required: job.requires_gpu,
       min_gpu_memory_mb: job.vram_mb,
     }),
-    metadata: clone(job.metadata || {}),
+    metadata,
   };
 }
 
@@ -254,6 +270,7 @@ module.exports = {
   JOB_STATUS,
   JOB_TERMINAL_STATUSES,
   EXECUTION_MODE,
+  JOB_TYPE,
   JOB_LANES,
   DEFAULT_COMMAND,
   nowIso,
@@ -263,6 +280,7 @@ module.exports = {
   normalizeTags,
   normalizeExecutionMode,
   normalizeLane,
+  normalizeJobType,
   normalizeCommand,
   stringifyCommand,
   normalizeResourceRequirements,
