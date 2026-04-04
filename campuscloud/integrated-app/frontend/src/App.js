@@ -1,8 +1,37 @@
-import React from 'react';
-import DashboardPage from './pages/DashboardPage';
+import React from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AuthProvider } from "./contexts/AuthContext";
+import ProtectedRoute from "./components/ProtectedRoute";
+import LoginPage from "./pages/LoginPage";
+import DashboardPage from "./pages/DashboardPage";
 
 function App() {
-  return <DashboardPage />;
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <Routes>
+          {/* Login route - accessible to everyone */}
+          <Route path="/login" element={<LoginPage />} />
+
+          {/* Dashboard route - protected, requires authentication */}
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <DashboardPage />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Redirect root to dashboard (or login if not authenticated) */}
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
+          {/* Catch-all - redirect to dashboard */}
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
+      </AuthProvider>
+    </BrowserRouter>
+  );
 }
 
 export default App;
