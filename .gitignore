@@ -7,3 +7,4 @@ venv/
 
 # Job outputs are generated at runtime.
 jobs/*/output/result.txt
+node_modules
