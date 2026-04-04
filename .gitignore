@@ -4,7 +4,10 @@ __pycache__/
 *.pyd
 .venv/
 venv/
+.env
+*.env.local
+node_modules/
+campuscloud/integrated-app/frontend/build/
 
 # Job outputs are generated at runtime.
 jobs/*/output/result.txt
-node_modules
