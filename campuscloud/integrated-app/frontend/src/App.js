@@ -10,7 +10,10 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <Routes>
-          {/* Login route - accessible to everyone */}
+          {/* Root shows the GPU intro animation → login (all in one page) */}
+          <Route path="/" element={<LoginPage />} />
+
+          {/* Direct /login also works — same component */}
           <Route path="/login" element={<LoginPage />} />
 
           {/* Dashboard route - protected, requires authentication */}
@@ -23,10 +26,7 @@ function App() {
             }
           />
 
-          {/* Redirect root to dashboard (or login if not authenticated) */}
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-
-          {/* Catch-all - redirect to dashboard */}
+          {/* Catch-all - redirect to dashboard (ProtectedRoute handles auth) */}
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </AuthProvider>
