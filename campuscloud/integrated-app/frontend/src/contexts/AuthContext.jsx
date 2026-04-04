@@ -3,6 +3,18 @@ import { API_BASE } from '../services/api';
 
 const AuthContext = createContext(null);
 
+function parseResponseBody(text) {
+  if (!text) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (parseError) {
+    return text;
+  }
+}
+
 /**
  * AuthProvider component that wraps the app
  * Manages authentication state and persists it to localStorage
@@ -47,10 +59,14 @@ export function AuthProvider({ children }) {
       });
 
       const text = await response.text();
-      const data = text ? JSON.parse(text) : null;
+      const data = parseResponseBody(text);
 
       if (!response.ok) {
-        throw new Error(data?.message || 'Login failed');
+        throw new Error(
+          typeof data === 'object' && data !== null
+            ? data.message || data.error || 'Login failed'
+            : data || 'Login failed'
+        );
       }
 
       // Store token and user info in state and localStorage

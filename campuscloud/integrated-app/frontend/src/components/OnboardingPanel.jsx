@@ -30,10 +30,10 @@ function OnboardingPanel({ form, setForm, isCreating, createError, onCreate, onb
       <div className="flex items-start justify-between gap-4 mb-5">
         <div>
           <p className="text-cyan-300 text-sm font-semibold tracking-[0.18em] uppercase">Provider Onboarding</p>
-          <h2 className="text-xl font-semibold mt-2">Connect a provider machine with scheduler metadata</h2>
+          <h2 className="text-xl font-semibold mt-2">Connect a provider machine by running the agent</h2>
           <p className="text-slate-400 mt-3 max-w-2xl text-sm">
             Create a node invite, generate the agent `.env`, then copy the `agent` folder to the provider machine.
-            The setup now includes workspace, lane, allocation cap, and Docker permission fields the scheduler uses directly.
+            After the agent connects, the backend detects GPU capability, assigns the node to a lane, and places it into a workspace automatically.
           </p>
         </div>
         <div className="rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 text-sm text-slate-300">
@@ -58,47 +58,12 @@ function OnboardingPanel({ form, setForm, isCreating, createError, onCreate, onb
 
           <div className="grid sm:grid-cols-2 gap-4">
             <label className="block">
-              <span className="block text-sm text-slate-300 mb-2">Workspace ID</span>
-              <input
-                value={form.workspaceId}
-                onChange={(event) => setForm((current) => ({ ...current, workspaceId: event.target.value }))}
-                className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
-                placeholder="demo-workspace"
-              />
-            </label>
-            <label className="block">
-              <span className="block text-sm text-slate-300 mb-2">Lane</span>
-              <select
-                value={form.lane}
-                onChange={(event) => setForm((current) => ({ ...current, lane: event.target.value }))}
-                className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
-              >
-                <option value="low">Low</option>
-                <option value="mid">Mid</option>
-                <option value="high">High</option>
-              </select>
-            </label>
-          </div>
-
-          <div className="grid sm:grid-cols-2 gap-4">
-            <label className="block">
               <span className="block text-sm text-slate-300 mb-2">Owner or Team Name</span>
               <input
                 value={form.ownerName}
                 onChange={(event) => setForm((current) => ({ ...current, ownerName: event.target.value }))}
                 className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
                 placeholder="CampusCloud Lab"
-              />
-            </label>
-            <label className="block">
-              <span className="block text-sm text-slate-300 mb-2">Max GPU Allocation %</span>
-              <input
-                type="number"
-                min="1"
-                max="100"
-                value={form.maxAllocPercent}
-                onChange={(event) => setForm((current) => ({ ...current, maxAllocPercent: Number(event.target.value) || 1 }))}
-                className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
               />
             </label>
           </div>
@@ -147,7 +112,7 @@ function OnboardingPanel({ form, setForm, isCreating, createError, onCreate, onb
             </div>
             {!latestSetup ? (
               <p className="text-sm text-slate-400">
-                Create a node setup to generate a unique worker token, workspace binding, lane assignment, and agent `.env`.
+                Create a node setup to generate a unique worker token and agent `.env`.
               </p>
             ) : (
               <div className="space-y-4 text-sm">
@@ -165,12 +130,8 @@ function OnboardingPanel({ form, setForm, isCreating, createError, onCreate, onb
                     <p className="font-semibold mt-2 break-all">{latestSetup.backendUrl}</p>
                   </div>
                   <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-                    <p className="text-slate-400">Workspace</p>
-                    <p className="font-semibold mt-2">{latestSetup.workspaceId}</p>
-                  </div>
-                  <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-                    <p className="text-slate-400">Lane / Cap</p>
-                    <p className="font-semibold mt-2">{latestSetup.lane} / {latestSetup.maxAllocPercent}%</p>
+                    <p className="text-slate-400">Assignment mode</p>
+                    <p className="font-semibold mt-2">Automatic on first connect</p>
                   </div>
                 </div>
 
@@ -231,8 +192,8 @@ function OnboardingPanel({ form, setForm, isCreating, createError, onCreate, onb
                       </div>
                       <StatusPill status={item.status} />
                     </div>
-                    <p className="text-sm text-slate-400 mt-3">Workspace: {item.workspaceId}</p>
-                    <p className="text-sm text-slate-400 mt-1">Lane: {item.lane} • Max alloc: {item.maxAllocPercent}%</p>
+                    <p className="text-sm text-slate-400 mt-3">Workspace: {item.assignedWorkspaceId || item.workspaceId || 'pending automatic assignment'}</p>
+                    <p className="text-sm text-slate-400 mt-1">Lane: {item.detectedLane || item.lane || 'pending detection'}</p>
                     <p className="text-sm text-slate-400 mt-1">Docker: {item.allowDocker ? 'enabled' : 'disabled'}</p>
                     <p className="text-sm text-slate-400 mt-1">Tags: {(item.tags || []).join(', ') || 'none'}</p>
                     <p className="text-sm text-slate-400 mt-1">Backend: {item.backendUrl}</p>

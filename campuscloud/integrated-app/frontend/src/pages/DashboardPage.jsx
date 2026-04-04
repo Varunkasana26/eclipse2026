@@ -1,9 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, Box, Cpu, LogOut, Radio, Server } from 'lucide-react';
+import { Activity, Box, Cpu, LogOut, Radio, Server, Waypoints } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import ConsoleNav from '../components/ConsoleNav';
-import { createOnboardingNode, fetchJobs, fetchNodes, fetchOnboardingNodes, submitJob } from '../services/api';
+import {
+  createOnboardingNode,
+  fetchJobs,
+  fetchNodes,
+  fetchOnboardingNodes,
+  fetchWorkspaces,
+  submitJob,
+} from '../services/api';
 import { connectToEventStream } from '../services/socket';
 import JobsPage from './JobsPage';
 import NodesPage from './NodesPage';
@@ -29,31 +36,11 @@ function upsertMany(items, nextItems, idKey = 'id') {
   return nextItems.reduce((current, item) => upsertById(current, item, idKey), items);
 }
 
-function buildPlannerJob(job) {
-  const plannedTier = job.lane_required || (job.requires_gpu ? 'gpu' : 'any');
-  const plannedChunks = job.is_parent ? job.chunk_count || 1 : job.chunk_total || job.chunk_count || 1;
-  let planningReason = job.requires_gpu
-    ? 'GPU job must respect workspace, lane, and allocation cap'
-    : 'Workspace-scoped job with no GPU requirement';
-
-  if (job.is_parent) {
-    planningReason = 'Parent tracks aggregate chunk state across child jobs';
-  } else if ((job.chunk_total || 1) > 1) {
-    planningReason = `Chunk ${Number(job.chunk_index || 1)} of ${job.chunk_total}`;
-  }
-
-  return {
-    ...job,
-    plannedTier,
-    plannedChunks,
-    planningReason,
-  };
-}
-
 function DashboardPage() {
   const navigate = useNavigate();
   const { logout, user } = useAuth();
   const [activeView, setActiveView] = useState('workspace');
+  const [workspaces, setWorkspaces] = useState([]);
   const [nodes, setNodes] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [onboardingItems, setOnboardingItems] = useState([]);
@@ -65,31 +52,19 @@ function DashboardPage() {
   const [submitError, setSubmitError] = useState('');
   const [createNodeError, setCreateNodeError] = useState('');
   const [form, setForm] = useState({
-    workspaceId: 'demo-workspace',
+    workspaceId: '',
     image: 'node:20-alpine',
     commandText: defaultCommand,
     envText: '{}',
     executionMode: 'local',
     requiresGpu: false,
-    laneRequired: '',
-    estimatedGpuPercent: 0,
-    chunkCount: 1,
+    gpuProfile: 'any',
   });
   const [onboardingForm, setOnboardingForm] = useState({
     workerName: 'Windows GPU Node',
     ownerName: '',
-    workspaceId: 'demo-workspace',
-    lane: 'low',
-    maxAllocPercent: 70,
     allowDocker: true,
     tagsText: 'windows,gpu,cuda,hackathon',
-  });
-  const [settings, setSettings] = useState({
-    workspaceName: 'CampusCloud Shared Workspace',
-    utilizationCapPercent: 70,
-    maxUsersPerWorkspace: 6,
-    splitMode: 'adaptive',
-    maxSplitChunks: 6,
   });
 
   const handleLogout = () => {
@@ -100,12 +75,13 @@ function DashboardPage() {
   useEffect(() => {
     let active = true;
 
-    Promise.all([fetchNodes(), fetchJobs(), fetchOnboardingNodes()])
-      .then(([nodesResponse, jobsResponse, onboardingResponse]) => {
+    Promise.all([fetchWorkspaces(), fetchNodes(), fetchJobs(), fetchOnboardingNodes()])
+      .then(([workspacesResponse, nodesResponse, jobsResponse, onboardingResponse]) => {
         if (!active) {
           return;
         }
 
+        setWorkspaces(workspacesResponse?.items || []);
         setNodes(nodesResponse?.items || []);
         setJobs(jobsResponse?.items || []);
         setOnboardingItems(onboardingResponse?.items || []);
@@ -122,6 +98,17 @@ function DashboardPage() {
   }, []);
 
   useEffect(() => {
+    if (form.workspaceId || workspaces.length === 0) {
+      return;
+    }
+
+    setForm((current) => ({
+      ...current,
+      workspaceId: workspaces[0].id,
+    }));
+  }, [form.workspaceId, workspaces]);
+
+  useEffect(() => {
     return connectToEventStream({
       onOpen: () => setConnectionState('live'),
       onClose: () => setConnectionState('disconnected'),
@@ -130,6 +117,7 @@ function DashboardPage() {
         const { event, payload } = message;
 
         if (event === 'snapshot') {
+          setWorkspaces(payload?.workspaces || []);
           setNodes(payload?.nodes || []);
           setJobs(payload?.jobs || []);
           return;
@@ -140,6 +128,9 @@ function DashboardPage() {
           payload?.node
         ) {
           setNodes((current) => upsertById(current, payload.node, 'node_id'));
+          if (payload?.workspace) {
+            setWorkspaces((current) => upsertById(current, payload.workspace));
+          }
           setOnboardingItems((current) =>
             current.map((item) =>
               item.workerId !== payload.node.node_id
@@ -148,6 +139,10 @@ function DashboardPage() {
                     ...item,
                     status: payload.node.isFresh ? 'connected' : 'offline',
                     connectedAt: item.connectedAt || payload.node.registeredAt,
+                    workspaceId: payload.node.workspace_id,
+                    assignedWorkspaceId: payload.node.workspace_id,
+                    lane: payload.node.lane,
+                    detectedLane: payload.node.lane,
                   }
             )
           );
@@ -165,6 +160,9 @@ function DashboardPage() {
           setJobs((current) => upsertById(current, payload.job));
           if (payload?.node) {
             setNodes((current) => upsertById(current, payload.node, 'node_id'));
+          }
+          if (payload?.workspace) {
+            setWorkspaces((current) => upsertById(current, payload.workspace));
           }
           return;
         }
@@ -192,53 +190,17 @@ function DashboardPage() {
   }, [jobs, selectedJobId]);
 
   const selectedJob = jobs.find((job) => job.id === selectedJobId) || jobs[0] || null;
-  const plannerJobs = useMemo(() => jobs.map((job) => buildPlannerJob(job)), [jobs]);
   const runnableJobs = useMemo(() => jobs.filter((job) => !job.is_parent), [jobs]);
-
-  const workspace = useMemo(() => {
-    const groupedNodes = nodes
-      .filter((node) => node.status !== 'offline' && node.gpu_available)
-      .reduce(
-        (accumulator, node) => {
-          const lane = node.lane || 'low';
-          if (!accumulator[lane]) {
-            accumulator[lane] = [];
-          }
-          accumulator[lane].push(node);
-          return accumulator;
-        },
-        { low: [], mid: [], high: [] }
-      );
-
-    const reservePercent = Math.max(0, 100 - settings.utilizationCapPercent);
-    const lanes = [
-      { id: 'low', label: 'Low', role: 'Starter GPU lane', rangeLabel: '4 GB to 8 GB VRAM', workloadLabel: 'Tiny inference, notebooks, preprocessing', chunkLabel: 'Single chunk or lightweight fan-out' },
-      { id: 'mid', label: 'Mid', role: 'Balanced GPU lane', rangeLabel: '10 GB to 16 GB VRAM', workloadLabel: 'Fine-tuning, larger inference batches', chunkLabel: 'Balanced split across 2 chunks' },
-      { id: 'high', label: 'High', role: 'Heavy GPU lane', rangeLabel: '20 GB+ VRAM', workloadLabel: 'Large batches, high-memory model tasks', chunkLabel: 'Aggressive split across 3 chunks' },
-    ].map((lane) => ({
-      ...lane,
-      node: groupedNodes[lane.id][0] || null,
-      candidateCount: groupedNodes[lane.id].length,
-      capPercent: settings.utilizationCapPercent,
-      reservePercent,
-    }));
-
-    return {
-      groupedNodes,
-      lanes,
-      readyLaneCount: lanes.filter((lane) => lane.node).length,
-      queuedChunkCount: runnableJobs.filter((job) => job.status === 'queued' || job.status === 'assigned').length,
-    };
-  }, [nodes, runnableJobs, settings]);
 
   const stats = useMemo(
     () => ({
       nodes: nodes.length,
-      availableNodes: nodes.filter((node) => node.status === 'idle').length,
+      availableNodes: nodes.filter((node) => node.availability === 'available').length,
       queuedJobs: runnableJobs.filter((job) => job.status === 'queued').length,
-      runningJobs: runnableJobs.filter((job) => job.status === 'running' || job.status === 'assigned').length,
+      activeJobs: runnableJobs.filter((job) => job.status === 'running' || job.status === 'assigned').length,
+      completeWorkspaces: workspaces.filter((workspace) => workspace.status === 'complete').length,
     }),
-    [nodes, runnableJobs]
+    [nodes, runnableJobs, workspaces]
   );
 
   async function handleSubmit(event) {
@@ -252,16 +214,26 @@ function DashboardPage() {
         throw new Error('Environment must be a JSON object.');
       }
 
+      const minGpuMemoryMb =
+        !form.requiresGpu
+          ? 0
+          : form.gpuProfile === 'high'
+            ? 20000
+            : form.gpuProfile === 'mid'
+              ? 10000
+              : 0;
+
       const response = await submitJob({
         image: form.image.trim() || 'node:20-alpine',
         command: form.commandText.trim() || defaultCommand,
         env,
-        workspace_id: form.workspaceId.trim() || 'demo-workspace',
+        workspace_id: form.workspaceId.trim(),
         requires_gpu: form.requiresGpu,
-        lane_required: form.laneRequired || undefined,
-        estimated_gpu_percent: form.requiresGpu ? form.estimatedGpuPercent : 0,
-        chunk_count: Math.max(1, form.chunkCount || 1),
         execution_mode: form.executionMode,
+        resource_requirements: {
+          gpu_required: form.requiresGpu,
+          min_gpu_memory_mb: minGpuMemoryMb,
+        },
       });
 
       setJobs((current) => upsertMany(current, [response?.job, ...(response?.children || [])].filter(Boolean)));
@@ -284,9 +256,6 @@ function DashboardPage() {
       const response = await createOnboardingNode({
         worker_name: onboardingForm.workerName.trim() || 'Windows GPU Node',
         owner_name: onboardingForm.ownerName.trim(),
-        workspace_id: onboardingForm.workspaceId.trim() || 'demo-workspace',
-        node_lane: onboardingForm.lane,
-        max_alloc_percent: onboardingForm.maxAllocPercent,
         allow_docker: onboardingForm.allowDocker,
         tags: onboardingForm.tagsText.split(',').map((item) => item.trim()).filter(Boolean),
       });
@@ -309,9 +278,10 @@ function DashboardPage() {
           <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
             <div>
               <p className="text-cyan-300 text-sm font-semibold tracking-[0.2em] uppercase">CampusCloud MVP</p>
-              <h1 className="text-3xl font-bold mt-2">Workspace GPU Console</h1>
+              <h1 className="text-3xl font-bold mt-2">Workspace Compute Console</h1>
               <p className="text-slate-400 mt-3 max-w-2xl">
-                Shared workspaces for low-end users, lane-aware scheduling, provider onboarding, reserve-aware allocation, and minimal chunked jobs.
+                Providers join by running the agent, the backend assigns each node into a low, mid, or high lane,
+                and users submit jobs to a workspace without touching scheduler internals.
               </p>
             </div>
             <div className="flex items-center gap-4">
@@ -338,12 +308,13 @@ function DashboardPage() {
           </div>
         </section>
 
-        <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <section className="grid grid-cols-2 lg:grid-cols-5 gap-4">
           {[
+            { label: 'Workspaces', value: workspaces.length, icon: Waypoints },
+            { label: 'Complete Pools', value: stats.completeWorkspaces, icon: Box },
             { label: 'Known Nodes', value: stats.nodes, icon: Server },
             { label: 'Available Nodes', value: stats.availableNodes, icon: Cpu },
-            { label: 'Queued Jobs', value: stats.queuedJobs, icon: Box },
-            { label: 'Active Jobs', value: stats.runningJobs, icon: Activity },
+            { label: 'Active Jobs', value: stats.activeJobs, icon: Activity },
           ].map((stat) => (
             <div key={stat.label} className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4">
               <stat.icon className="w-5 h-5 text-cyan-300" />
@@ -355,14 +326,43 @@ function DashboardPage() {
 
         <ConsoleNav activeView={activeView} onChange={setActiveView} />
 
-        {activeView === 'workspace' ? <WorkspacePage workspace={workspace} stats={stats} settings={settings} connectionState={connectionState} /> : null}
+        {activeView === 'workspace' ? (
+          <WorkspacePage workspaces={workspaces} stats={stats} connectionState={connectionState} />
+        ) : null}
         {activeView === 'nodes' ? (
-          <NodesPage workspace={workspace} onboardingForm={onboardingForm} setOnboardingForm={setOnboardingForm} isCreatingNode={isCreatingNode} createNodeError={createNodeError} handleCreateNode={handleCreateNode} onboardingItems={onboardingItems} latestSetup={latestSetup} nodes={nodes} />
+          <NodesPage
+            onboardingForm={onboardingForm}
+            setOnboardingForm={setOnboardingForm}
+            isCreatingNode={isCreatingNode}
+            createNodeError={createNodeError}
+            handleCreateNode={handleCreateNode}
+            onboardingItems={onboardingItems}
+            latestSetup={latestSetup}
+            nodes={nodes}
+            workspaces={workspaces}
+          />
         ) : null}
         {activeView === 'jobs' ? (
-          <JobsPage form={form} setForm={setForm} onSubmit={handleSubmit} isSubmitting={isSubmitting} submitError={submitError} jobs={jobs} selectedJob={selectedJob} setSelectedJobId={setSelectedJobId} plannerJobs={plannerJobs} settings={settings} />
+          <JobsPage
+            form={form}
+            setForm={setForm}
+            onSubmit={handleSubmit}
+            isSubmitting={isSubmitting}
+            submitError={submitError}
+            jobs={jobs}
+            selectedJob={selectedJob}
+            setSelectedJobId={setSelectedJobId}
+            workspaces={workspaces}
+          />
         ) : null}
-        {activeView === 'settings' ? <SettingsPage settings={settings} setSettings={setSettings} /> : null}
+        {activeView === 'settings' ? (
+          <SettingsPage
+            workspaces={workspaces}
+            nodes={nodes}
+            jobs={runnableJobs}
+            connectionState={connectionState}
+          />
+        ) : null}
       </main>
     </div>
   );

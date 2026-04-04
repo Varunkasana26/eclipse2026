@@ -94,13 +94,19 @@ function parseBoolean(value, fallback) {
   return fallback;
 }
 
+function normalizeUrl(value, fallback) {
+  const resolved = String(value || fallback || "").trim();
+  return resolved.replace(/\/+$/, "");
+}
+
 const config = {
   env: process.env.NODE_ENV || "development",
-  backendUrl: (
+  backendUrl: normalizeUrl(
     process.env.BACKEND_URL ||
     process.env.BACKEND_BASE_URL ||
     "http://127.0.0.1:5000"
-  ).replace(/\/+$/, ""),
+  ),
+  gpuServerUrl: normalizeUrl(process.env.GPU_SERVER_URL, "http://127.0.0.1:8000"),
   workerSecret:
     process.env.WORKER_TOKEN ||
     process.env.WORKER_SECRET ||
@@ -116,6 +122,9 @@ const config = {
   heartbeatIntervalMs: parseNumber(process.env.HEARTBEAT_INTERVAL_MS, 5000),
   pollIntervalMs: parseNumber(process.env.POLL_INTERVAL_MS, 4000),
   requestTimeoutMs: parseNumber(process.env.REQUEST_TIMEOUT_MS, 10000),
+  gpuRequestTimeoutMs: parseNumber(process.env.GPU_REQUEST_TIMEOUT_MS, 20000),
+  gpuRequestRetries: Math.max(0, parseNumber(process.env.GPU_REQUEST_RETRIES, 1)),
+  maxGpuCodeLength: Math.max(1, parseNumber(process.env.MAX_GPU_CODE_LENGTH, 20000)),
   executorMode: (process.env.EXECUTOR_MODE || "auto").toLowerCase(),
   mockJobDurationMs: parseNumber(process.env.MOCK_JOB_DURATION_MS, 6000),
   mockLogIntervalMs: parseNumber(process.env.MOCK_LOG_INTERVAL_MS, 1000)

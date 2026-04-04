@@ -22,6 +22,7 @@ function createSocketServer(server, orchestrator) {
       JSON.stringify({
         event: EVENT_TYPES.SNAPSHOT,
         payload: {
+          workspaces: orchestrator.listWorkspaces(),
           nodes: orchestrator.listNodes(),
           jobs: orchestrator.listJobs(),
         },

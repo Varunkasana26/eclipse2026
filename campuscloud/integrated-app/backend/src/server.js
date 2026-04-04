@@ -8,6 +8,7 @@ const { createAuthRoutes } = require("./routes/auth.routes");
 const { createWorkerRoutes } = require("./routes/workers.routes");
 const { createNodeRoutes } = require("./routes/nodes.routes");
 const { createJobRoutes } = require("./routes/jobs.routes");
+const { createWorkspaceRoutes } = require("./routes/workspaces.routes");
 const { createHealthRoutes } = require("./routes/health.routes");
 const { createOnboardingRoutes } = require("./routes/onboarding.routes");
 const { startAssignmentScheduler } = require("./scheduler/assignmentScheduler");
@@ -57,6 +58,7 @@ function createRuntime(port) {
   app.use("/api/auth", createAuthRoutes());
   app.use("/api/onboarding", createOnboardingRoutes(orchestrator));
   app.use("/api/nodes", createNodeRoutes(orchestrator));
+  app.use("/api/workspaces", createWorkspaceRoutes(orchestrator));
   app.use("/api/workers", createWorkerRoutes(orchestrator));
   app.use("/api/jobs", createJobRoutes(orchestrator));
   app.use((_req, res) => res.status(404).json({ error: "Route not found" }));

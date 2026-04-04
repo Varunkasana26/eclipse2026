@@ -54,14 +54,14 @@ function NodeGrid({ nodes }) {
               </div>
               <div className="mt-4 space-y-2 text-sm text-slate-300">
                 <p>Online: <span className="text-slate-100">{node.online ? 'yes' : 'no'}</span></p>
-                <p>Worker state: <span className="text-slate-100">{node.status}</span></p>
-                <p>Workspace: <span className="text-slate-100">{node.workspace_id}</span></p>
-                <p>Lane: <span className="text-slate-100 uppercase">{node.lane}</span></p>
+                <p>Availability: <span className="text-slate-100">{node.availability || node.status}</span></p>
+                <p>Workspace: <span className="text-slate-100">{node.workspace_id || 'unassigned'}</span></p>
+                <p>Lane: <span className="text-slate-100 uppercase">{node.lane || node.lane_status || 'unsupported'}</span></p>
                 <p>GPU available: <span className="text-slate-100">{node.gpu_available ? 'yes' : 'no'}</span></p>
                 <p>GPU name: <span className="text-slate-100">{node.gpu_name || 'n/a'}</span></p>
                 <p>VRAM: <span className="text-slate-100">{node.vram_mb ? `${(node.vram_mb / 1024).toFixed(1)} GB` : 'n/a'}</span></p>
                 <p>Docker ready: <span className="text-slate-100">{node.docker_ready ? 'yes' : 'no'}</span></p>
-                <p>Allocation: <span className="text-slate-100">{node.current_alloc_percent || 0}% / {node.max_alloc_percent || 0}%</span></p>
+                <p>Backend usage: <span className="text-slate-100">{node.current_alloc_percent || 0}%</span></p>
                 <p>Utilization: <span className="text-slate-100">{node.utilization_percent || 0}%</span></p>
                 <p>Queue depth: <span className="text-slate-100">{node.current_queue_depth || 0}</span></p>
                 <p>Current job: <span className="text-slate-100">{node.current_job_id || 'none'}</span></p>

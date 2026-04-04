@@ -26,8 +26,11 @@ function JobList({ jobs, selectedJobId, onSelect }) {
                     Workspace: {job.workspace_id} - Node: {job.node_id || 'pending'}
                   </p>
                   <p className="text-sm text-slate-500 mt-1">
-                    Lane: {job.lane_required || 'auto'} - GPU: {job.requires_gpu ? 'yes' : 'no'}
+                    Lane: {job.assigned_lane || job.planned_lane || 'auto'} - GPU: {job.requires_gpu ? 'yes' : 'no'}
                   </p>
+                  {job.queue_reason ? (
+                    <p className="text-xs text-amber-300 mt-2">{job.queue_reason}</p>
+                  ) : null}
                   {job.parent_job_id ? (
                     <p className="text-xs text-slate-500 mt-2">
                       Parent: {job.parent_job_id} - Chunk {job.chunk_index}/{job.chunk_total}
