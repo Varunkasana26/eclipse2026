@@ -15,9 +15,14 @@ module.exports = {
   HOST: process.env.HOST || "0.0.0.0",
   NODE_ENV: process.env.NODE_ENV || "development",
   CLIENT_URL: clientUrl,
+  BACKEND_PUBLIC_URL:
+    process.env.BACKEND_PUBLIC_URL || `http://127.0.0.1:${parseNumber(process.env.PORT, 5000)}`,
   HEARTBEAT_TIMEOUT_MS: parseNumber(process.env.HEARTBEAT_TIMEOUT_MS, 15000),
   ASSIGNMENT_SWEEP_MS: parseNumber(process.env.ASSIGNMENT_SWEEP_MS, 2000),
   MAX_LOGS_PER_JOB: parseNumber(process.env.MAX_LOGS_PER_JOB, 500),
+  DEFAULT_WORKSPACE_ID: process.env.DEFAULT_WORKSPACE_ID || "demo-workspace",
+  DEFAULT_MAX_ALLOC_PERCENT: parseNumber(process.env.DEFAULT_MAX_ALLOC_PERCENT, 70),
+  WORKER_SECRET: process.env.WORKER_SECRET || "",
   CORS_ORIGINS: rawCorsOrigins
     .split(",")
     .map((origin) => origin.trim())

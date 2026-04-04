@@ -9,6 +9,19 @@ function formatTime(value) {
   return new Date(value).toLocaleString();
 }
 
+function formatFreshness(ageMs) {
+  if (!Number.isFinite(ageMs)) {
+    return 'unknown';
+  }
+
+  if (ageMs < 1000) {
+    return 'just now';
+  }
+
+  const seconds = Math.round(ageMs / 1000);
+  return `${seconds}s ago`;
+}
+
 function NodeGrid({ nodes }) {
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6">
@@ -23,10 +36,10 @@ function NodeGrid({ nodes }) {
           </div>
         ) : (
           nodes.map((node) => (
-            <div key={node.nodeId} className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
+            <div key={node.node_id || node.nodeId} className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-lg font-semibold">{node.name || node.nodeId}</p>
+                  <p className="text-lg font-semibold">{node.name || node.node_id}</p>
                   <p className="text-sm text-slate-400 mt-1">{node.hostname}</p>
                 </div>
                 <span className={`text-xs font-semibold px-3 py-1 rounded-full ${
@@ -40,10 +53,23 @@ function NodeGrid({ nodes }) {
                 </span>
               </div>
               <div className="mt-4 space-y-2 text-sm text-slate-300">
-                <p>Executor: <span className="text-slate-100">{node.executorMode}</span></p>
-                <p>GPU: <span className="text-slate-100">{node.gpuSummary}</span></p>
-                <p>RAM: <span className="text-slate-100">{node.ram?.total_gb || 0} GB</span></p>
-                <p>Last heartbeat: <span className="text-slate-100">{formatTime(node.lastHeartbeatAt)}</span></p>
+                <p>Online: <span className="text-slate-100">{node.online ? 'yes' : 'no'}</span></p>
+                <p>Worker state: <span className="text-slate-100">{node.status}</span></p>
+                <p>Workspace: <span className="text-slate-100">{node.workspace_id}</span></p>
+                <p>Lane: <span className="text-slate-100 uppercase">{node.lane}</span></p>
+                <p>GPU available: <span className="text-slate-100">{node.gpu_available ? 'yes' : 'no'}</span></p>
+                <p>GPU name: <span className="text-slate-100">{node.gpu_name || 'n/a'}</span></p>
+                <p>VRAM: <span className="text-slate-100">{node.vram_mb ? `${(node.vram_mb / 1024).toFixed(1)} GB` : 'n/a'}</span></p>
+                <p>Docker ready: <span className="text-slate-100">{node.docker_ready ? 'yes' : 'no'}</span></p>
+                <p>Allocation: <span className="text-slate-100">{node.current_alloc_percent || 0}% / {node.max_alloc_percent || 0}%</span></p>
+                <p>Utilization: <span className="text-slate-100">{node.utilization_percent || 0}%</span></p>
+                <p>Queue depth: <span className="text-slate-100">{node.current_queue_depth || 0}</span></p>
+                <p>Current job: <span className="text-slate-100">{node.current_job_id || 'none'}</span></p>
+                <p>Heartbeat freshness: <span className="text-slate-100">{formatFreshness(node.heartbeat_age_ms)}</span></p>
+                <p>Last heartbeat: <span className="text-slate-100">{formatTime(node.last_heartbeat || node.lastHeartbeatAt)}</span></p>
+                {node.offline_reason ? (
+                  <p>Offline reason: <span className="text-rose-300">{node.offline_reason}</span></p>
+                ) : null}
               </div>
               <div className="mt-4 flex items-center gap-2 text-xs text-slate-400">
                 <Cpu className="w-4 h-4" />
@@ -58,3 +84,4 @@ function NodeGrid({ nodes }) {
 }
 
 export default NodeGrid;
+

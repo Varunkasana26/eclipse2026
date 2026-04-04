@@ -1,49 +1,30 @@
 {
-  "localDemoJob": {
+  "simpleWorkspaceJob": {
     "image": "node:20-alpine",
-    "command": [
-      "node",
-      "-e",
-      "console.log('CampusCloud demo job started'); setTimeout(() => console.log('CampusCloud demo job finished'), 750);"
-    ],
-    "execution_mode": "local",
-    "resource_requirements": {
-      "gpu_required": false
-    },
-    "metadata": {
-      "timeout_ms": 300000
-    }
+    "command": "node -e \"console.log('CampusCloud simple job')\"",
+    "workspace_id": "demo-workspace",
+    "requires_gpu": false,
+    "chunk_count": 1
   },
-  "dockerCpuJob": {
-    "image": "python:3.11-slim",
-    "command": [
-      "python",
-      "-c",
-      "print('hello from docker cpu job')"
-    ],
-    "execution_mode": "docker",
-    "resource_requirements": {
-      "gpu_required": false
-    },
-    "metadata": {
-      "timeout_ms": 300000
-    }
-  },
-  "dockerGpuJob": {
+  "gpuLaneJob": {
     "image": "pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime",
-    "command": [
-      "python",
-      "-c",
-      "import torch; print(torch.cuda.is_available())"
-    ],
-    "execution_mode": "docker",
-    "resource_requirements": {
-      "gpu_required": true,
-      "gpu_count": 1,
-      "min_gpu_memory_mb": 8000
-    },
-    "metadata": {
-      "timeout_ms": 300000
+    "command": "python -c \"print('gpu lane job')\"",
+    "workspace_id": "demo-workspace",
+    "requires_gpu": true,
+    "lane_required": "mid",
+    "estimated_gpu_percent": 40,
+    "chunk_count": 1
+  },
+  "chunkedGpuJob": {
+    "image": "pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime",
+    "command": "python -c \"print('chunked gpu job')\"",
+    "workspace_id": "demo-workspace",
+    "requires_gpu": true,
+    "lane_required": "high",
+    "estimated_gpu_percent": 30,
+    "chunk_count": 3,
+    "env": {
+      "BATCH_ID": "demo-01"
     }
   }
 }

@@ -26,6 +26,10 @@ async function fetchNodes() {
   return request('/api/nodes');
 }
 
+async function fetchOnboardingNodes() {
+  return request('/api/onboarding');
+}
+
 async function fetchJobs() {
   return request('/api/jobs');
 }
@@ -41,4 +45,11 @@ async function submitJob(payload) {
   });
 }
 
-export { API_BASE, fetchJob, fetchJobs, fetchNodes, submitJob };
+async function createOnboardingNode(payload) {
+  return request('/api/onboarding/nodes', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export { API_BASE, createOnboardingNode, fetchJob, fetchJobs, fetchNodes, fetchOnboardingNodes, submitJob };
