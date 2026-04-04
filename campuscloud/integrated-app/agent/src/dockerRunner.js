@@ -1,226 +1,173 @@
-import fetch from "node-fetch";
-import config from "./config.js";
+import { spawn } from "node:child_process";
 import logger from "./utils/logger.js";
+import { extractPythonCodeFromJob } from "./remoteGpuRunner.js";
 
-const PYTHON_EXECUTABLES = new Set(["python", "python3", "py"]);
-
-function emitLine(text, stream, onLog) {
-  for (const line of String(text).split(/\r?\n/)) {
-    if (!line.trim()) {
-      continue;
-    }
-
-    onLog?.({
-      stream,
-      text: line,
-      ts: new Date().toISOString(),
-    });
-  }
-}
-
-function isPythonExecutable(value) {
-  return PYTHON_EXECUTABLES.has(String(value || "").toLowerCase());
-}
-
-function extractCodeFromCommand(command) {
-  const parts = Array.isArray(command) ? command.map((part) => String(part)) : [];
-  if (parts.length < 3 || !isPythonExecutable(parts[0]) || parts[1] !== "-c") {
-    return null;
-  }
-
-  return parts.slice(2).join(" ");
-}
-
-function extractPythonCodeFromJob(job) {
-  const candidates = [
-    job?.python_code,
-    job?.pythonCode,
-    job?.code,
-    job?.source_code,
-    job?.sourceCode,
-    job?.metadata?.python_code,
-    job?.metadata?.pythonCode,
-    job?.metadata?.code,
-    extractCodeFromCommand(job?.command),
-  ];
-
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim()) {
-      return candidate;
-    }
-  }
-
-  return null;
-}
-
-function validatePythonCode(code) {
-  if (typeof code !== "string" || !code.trim()) {
-    throw new Error("Python code is required for remote GPU execution");
-  }
-
-  if (code.length > config.maxGpuCodeLength) {
-    throw new Error(`Python code exceeds max length of ${config.maxGpuCodeLength} characters`);
-  }
-}
-
-function buildFailureResult(job, startedAt, error, infrastructureFailure = true) {
+function buildDockerResult(startedAt, overrides = {}) {
   return {
-    status: "failed",
-    logs: [],
-    result: {
-      exit_code: 1,
-      output_files: [],
-      duration_ms: Date.now() - startedAt,
-      error: error.message,
-      output: "",
-      runner: "remote-gpu",
-      gpu_server_url: config.gpuServerUrl,
-      infrastructure_failure: infrastructureFailure,
-    },
+    exit_code: 1,
+    output_files: [],
+    duration_ms: Date.now() - startedAt,
+    output: "",
+    error: "Docker execution failed",
+    runner: "docker",
+    ...overrides,
   };
 }
 
-async function executeRemoteJob(job, code, hooks, attempt) {
-  const startedAt = Date.now();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.gpuRequestTimeoutMs);
-  const endpoint = `${config.gpuServerUrl}/run`;
-
-  logger.info("Sending GPU execution request", {
-    job_id: job.job_id,
-    endpoint,
-    attempt,
-    timeout_ms: config.gpuRequestTimeoutMs,
-    code_length: code.length,
-  });
-
-  try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ code }),
-      signal: controller.signal,
-    });
-
-    const rawBody = await response.text();
-    let payload = {};
-
-    if (rawBody) {
-      try {
-        payload = JSON.parse(rawBody);
-      } catch (error) {
-        throw new Error(`GPU server returned invalid JSON: ${error.message}`);
-      }
-    }
-
-    if (!response.ok) {
-      const detail = payload.error || rawBody || `${response.status} ${response.statusText}`;
-      throw new Error(`GPU server request failed: ${detail}`);
-    }
-
-    const durationMs = Date.now() - startedAt;
-    const output = typeof payload.output === "string" ? payload.output : "";
-    const errorText =
-      typeof payload.error === "string" && payload.error.trim() ? payload.error : null;
-
-    logger.info("GPU execution response received", {
-      job_id: job.job_id,
-      attempt,
-      duration_ms: durationMs,
-      has_output: Boolean(output),
-      has_error: Boolean(errorText),
-    });
-
-    emitLine(output, "stdout", hooks.onLog);
-    emitLine(errorText, "stderr", hooks.onLog);
-
-    const result = {
-      exit_code: errorText ? 1 : 0,
-      output_files: [],
-      duration_ms: durationMs,
-      output,
-      error: errorText,
-      runner: "remote-gpu",
-      gpu_server_url: config.gpuServerUrl,
-      infrastructure_failure: false,
-    };
-
-    if (errorText) {
-      await hooks.onFail?.(result);
-      return {
-        status: "failed",
-        logs: [],
-        result,
-      };
-    }
-
-    await hooks.onComplete?.(result);
-    return {
-      status: "completed",
-      logs: [],
-      result,
-    };
-  } catch (error) {
-    const durationMs = Date.now() - startedAt;
-    const message =
-      error.name === "AbortError"
-        ? `GPU server request timed out after ${config.gpuRequestTimeoutMs}ms`
-        : error.message;
-
-    logger.warn("GPU execution request failed", {
-      job_id: job.job_id,
-      attempt,
-      duration_ms: durationMs,
-      error: message,
-    });
-
-    throw new Error(message);
-  } finally {
-    clearTimeout(timeout);
+function getJobCommand(job) {
+  if (Array.isArray(job?.command) && job.command.length > 0) {
+    return job.command.map((part) => String(part));
   }
+
+  const pythonCode = extractPythonCodeFromJob(job);
+  if (pythonCode) {
+    return ["python", "-c", pythonCode];
+  }
+
+  return [];
+}
+
+function getJobImage(job, useGpu) {
+  const image = String(job?.image || "").trim();
+  if (image) {
+    return image;
+  }
+
+  return useGpu ? "" : "python:3.10-slim";
+}
+
+function getDockerArgs(job) {
+  const useGpu = Boolean(job?.resource_requirements?.gpu_required);
+  const image = getJobImage(job, useGpu);
+  const command = getJobCommand(job);
+
+  if (!image) {
+    throw new Error("Docker image is required for GPU container jobs");
+  }
+
+  if (command.length === 0) {
+    throw new Error("Docker jobs require a command or inline Python code");
+  }
+
+  const args = ["run", "--rm"];
+
+  if (useGpu) {
+    args.push("--gpus", "all");
+  }
+
+  for (const [key, value] of Object.entries(job?.env || {})) {
+    if (value === undefined || value === null) {
+      continue;
+    }
+
+    args.push("-e", `${key}=${String(value)}`);
+  }
+
+  args.push(image, ...command);
+  return { args, image, command, useGpu };
 }
 
 async function runDockerJob(job, hooks = {}) {
-  const startedAt = Date.now();
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    let dockerMeta;
 
-  try {
-    const code = extractPythonCodeFromJob(job);
-    validatePythonCode(code);
-
-    const maxAttempts = config.gpuRequestRetries + 1;
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      try {
-        return await executeRemoteJob(job, code, hooks, attempt);
-      } catch (error) {
-        lastError = error;
-
-        await hooks.onLog?.({
-          stream: "stderr",
-          text: `GPU attempt ${attempt}/${maxAttempts} failed for job ${job.job_id}: ${error.message}`,
-          ts: new Date().toISOString(),
-        });
-
-        if (attempt < maxAttempts) {
-          logger.warn("Retrying GPU execution request", {
-            job_id: job.job_id,
-            next_attempt: attempt + 1,
-          });
-        }
-      }
+    try {
+      dockerMeta = getDockerArgs(job);
+    } catch (error) {
+      const result = buildDockerResult(startedAt, { error: error.message });
+      Promise.resolve(hooks.onFail?.(result)).catch(() => {});
+      resolve({ status: "failed", logs: [], result });
+      return;
     }
 
-    const failure = buildFailureResult(job, startedAt, lastError || new Error("GPU execution failed"));
-    await hooks.onFail?.(failure.result);
-    return failure;
-  } catch (error) {
-    const failure = buildFailureResult(job, startedAt, error, false);
-    await hooks.onFail?.(failure.result);
-    return failure;
-  }
+    logger.info("Starting Docker job", {
+      job_id: job.job_id,
+      image: dockerMeta.image,
+      use_gpu: dockerMeta.useGpu,
+      command: dockerMeta.command,
+    });
+
+    const proc = spawn("docker", dockerMeta.args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      env: process.env,
+    });
+
+    const timeoutMs = Number(job.timeout_ms) || 300000;
+    const timeout = setTimeout(() => {
+      try {
+        proc.kill("SIGTERM");
+      } catch {
+        return;
+      }
+    }, timeoutMs);
+
+    let stdout = "";
+    let stderr = "";
+
+    const forwardLogs = async (chunk, stream) => {
+      const text = String(chunk);
+      if (stream === "stdout") {
+        stdout += text;
+      } else {
+        stderr += text;
+      }
+
+      for (const line of text.split(/\r?\n/)) {
+        if (!line.trim()) {
+          continue;
+        }
+
+        await hooks.onLog?.({
+          stream,
+          text: line,
+          ts: new Date().toISOString(),
+        });
+      }
+    };
+
+    proc.stdout.on("data", (chunk) => {
+      forwardLogs(chunk, "stdout").catch(() => {});
+    });
+
+    proc.stderr.on("data", (chunk) => {
+      forwardLogs(chunk, "stderr").catch(() => {});
+    });
+
+    proc.on("error", async (error) => {
+      clearTimeout(timeout);
+      const result = buildDockerResult(startedAt, { error: error.message, output: stdout });
+      await hooks.onFail?.(result);
+      resolve({ status: "failed", logs: [], result });
+    });
+
+    proc.on("close", async (exitCode, signal) => {
+      clearTimeout(timeout);
+
+      const result = buildDockerResult(startedAt, {
+        exit_code: typeof exitCode === "number" ? exitCode : -1,
+        output: stdout,
+        error:
+          exitCode === 0
+            ? null
+            : stderr.trim() || `Docker job exited with code ${exitCode}${signal ? ` (${signal})` : ""}`,
+        signal: signal || null,
+      });
+
+      if (exitCode === 0) {
+        await hooks.onComplete?.(result);
+      } else {
+        await hooks.onFail?.(result);
+      }
+
+      resolve({
+        status: exitCode === 0 ? "completed" : "failed",
+        logs: [],
+        result,
+      });
+    });
+  });
 }
 
-export { extractPythonCodeFromJob, runDockerJob };
+export { runDockerJob };

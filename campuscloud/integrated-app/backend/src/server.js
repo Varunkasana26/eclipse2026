@@ -14,6 +14,7 @@ const { createOnboardingRoutes } = require("./routes/onboarding.routes");
 const { startAssignmentScheduler } = require("./scheduler/assignmentScheduler");
 const { getArtifactStorageRoot } = require("./services/jobAssetStorage.service");
 const { createOrchestratorService } = require("./services/orchestrator.service");
+const { createSupabaseStateStore } = require("./services/supabaseStateStore.service");
 const { createSocketServer } = require("./sockets/wsServer");
 
 const DEFAULT_PORT = Number(process.env.PORT || env.PORT || 5000);
@@ -38,6 +39,12 @@ function createRuntime(port) {
     workerSecret: env.WORKER_SECRET,
     defaultWorkspaceId: env.DEFAULT_WORKSPACE_ID,
     defaultMaxAllocPercent: env.DEFAULT_MAX_ALLOC_PERCENT,
+  });
+  const stateStore = createSupabaseStateStore({
+    supabaseUrl: env.SUPABASE_URL,
+    serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
+    table: env.SUPABASE_STATE_TABLE,
+    instanceKey: env.BACKEND_INSTANCE_KEY,
   });
 
   app.use(
@@ -68,15 +75,69 @@ function createRuntime(port) {
   const server = http.createServer(app);
   const stopScheduler = startAssignmentScheduler(orchestrator, env.ASSIGNMENT_SWEEP_MS);
   let wss = null;
+  let persistTimer = null;
+
+  async function flushStateSnapshot() {
+    if (!stateStore.enabled) {
+      return false;
+    }
+
+    await stateStore.saveSnapshot(orchestrator.exportState());
+    return true;
+  }
+
+  function scheduleStateSnapshot() {
+    if (!stateStore.enabled) {
+      return;
+    }
+
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+    }
+
+    persistTimer = setTimeout(() => {
+      flushStateSnapshot().catch((error) => {
+        console.error("Failed to persist orchestrator snapshot", {
+          message: error.message,
+          table: stateStore.table,
+          instanceKey: stateStore.instanceKey,
+        });
+      });
+    }, 500);
+  }
+
+  orchestrator.events.on("message", () => {
+    scheduleStateSnapshot();
+  });
 
   return {
     port,
     server,
     orchestrator,
+    stateStore,
+    async hydrateFromPersistence() {
+      if (!stateStore.enabled) {
+        return false;
+      }
+
+      const snapshot = await stateStore.loadLatestSnapshot();
+      if (!snapshot) {
+        return false;
+      }
+
+      return orchestrator.importState(snapshot);
+    },
+    async flushStateSnapshot() {
+      return flushStateSnapshot();
+    },
     attachSockets() {
       wss = createSocketServer(server, orchestrator);
     },
     stop() {
+      if (persistTimer) {
+        clearTimeout(persistTimer);
+      }
+      flushStateSnapshot().catch(() => {});
       stopScheduler();
       if (wss) {
         wss.close();
@@ -129,6 +190,22 @@ function listenWithRetry(startPort, maxAttempts) {
 async function startServer() {
   try {
     activeRuntime = await listenWithRetry(DEFAULT_PORT, MAX_PORT_ATTEMPTS);
+    if (activeRuntime.stateStore.enabled) {
+      try {
+        const restored = await activeRuntime.hydrateFromPersistence();
+        console.log(
+          restored
+            ? `CampusCloud state restored from Supabase (${activeRuntime.stateStore.instanceKey})`
+            : `CampusCloud Supabase state store enabled (${activeRuntime.stateStore.instanceKey})`
+        );
+      } catch (error) {
+        console.error("Failed to restore CampusCloud state from Supabase", {
+          message: error.message,
+          instanceKey: activeRuntime.stateStore.instanceKey,
+          table: activeRuntime.stateStore.table,
+        });
+      }
+    }
     const publicUrl = getBackendPublicUrl(activeRuntime.port);
 
     console.log(`CampusCloud backend listening on http://${env.HOST}:${activeRuntime.port}`);

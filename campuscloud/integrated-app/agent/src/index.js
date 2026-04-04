@@ -1,6 +1,7 @@
 import WorkerAgent from "./agent.js";
 import { registerWorker } from "./api.js";
 import config from "./config.js";
+import { ensureRuntimeHealth } from "./runtimeHealth.js";
 import { getSystemInfo } from "./systemInfo.js";
 import logger from "./utils/logger.js";
 
@@ -39,6 +40,8 @@ async function main() {
       worker_id: config.workerId || systemInfo.hostname
     });
   }
+
+  await ensureRuntimeHealth(systemInfo);
 
   await attemptRegistration(systemInfo);
   const agent = new WorkerAgent(systemInfo);

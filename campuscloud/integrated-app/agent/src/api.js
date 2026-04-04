@@ -9,6 +9,23 @@ const {
   buildWorkerRegistrationPayload
 } = contract;
 
+function getWorkerId(fallbackHost = "") {
+  return config.workerId || config.workerName || fallbackHost;
+}
+
+function getAuthHeaders() {
+  const workerSecret = String(config.workerSecret || "").trim();
+
+  if (!workerSecret) {
+    return {};
+  }
+
+  return {
+    Authorization: `Bearer ${workerSecret}`,
+    "x-worker-secret": workerSecret
+  };
+}
+
 async function request(method, path, body) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
@@ -18,7 +35,7 @@ async function request(method, path, body) {
       method,
       headers: {
         "Content-Type": "application/json",
-        ...(config.workerSecret ? { Authorization: `Bearer ${config.workerSecret}` } : {})
+        ...getAuthHeaders()
       },
       body: body ? JSON.stringify(body) : undefined,
       signal: controller.signal
@@ -55,7 +72,7 @@ async function registerWorker(systemInfo) {
     "POST",
     "/api/workers/register",
     buildWorkerRegistrationPayload({
-      workerId: config.workerId || systemInfo.hostname,
+      workerId: getWorkerId(systemInfo.hostname),
       workerName: config.workerName,
       workerTags: config.workerTags,
       executorMode: config.executorMode,
@@ -74,7 +91,7 @@ async function sendHeartbeat(status, currentJobId) {
     "POST",
     "/api/workers/heartbeat",
     buildHeartbeatPayload({
-      workerId: config.workerId || config.workerName,
+      workerId: getWorkerId(),
       status,
       currentJobId
     })
@@ -82,7 +99,7 @@ async function sendHeartbeat(status, currentJobId) {
 }
 
 async function pollForJob() {
-  const workerId = config.workerId || config.workerName;
+  const workerId = getWorkerId();
   return request("GET", `/api/workers/${encodeURIComponent(workerId)}/next-job`);
 }
 
@@ -91,7 +108,7 @@ async function updateJobStatus(jobId, status, extra = {}) {
     "POST",
     `/api/jobs/${encodeURIComponent(jobId)}/status`,
     buildJobStatusPayload({
-      workerId: config.workerId || config.workerName,
+      workerId: getWorkerId(),
       status,
       extra
     })

@@ -32,6 +32,45 @@ function getPublicBaseUrl(req) {
   return env.BACKEND_PUBLIC_URL;
 }
 
+function hasInlinePythonCode(body) {
+  const candidates = [
+    body?.python_code,
+    body?.pythonCode,
+    body?.code,
+    body?.source_code,
+    body?.sourceCode,
+    body?.metadata?.python_code,
+    body?.metadata?.pythonCode,
+    body?.metadata?.code,
+  ];
+
+  return candidates.some((item) => typeof item === "string" && item.trim());
+}
+
+function validateJobRequest(body = {}) {
+  const executionMode = String(body.execution_mode || body.executionMode || "local").trim().toLowerCase();
+  const hasCommand = Array.isArray(body.command) && body.command.length > 0;
+  const requiresGpu = Boolean(body.resource_requirements?.gpu_required || body.requires_gpu);
+
+  if (executionMode === "docker") {
+    if (!String(body.image || "").trim()) {
+      throw new Error("Docker jobs require an image");
+    }
+
+    if (!hasCommand && !hasInlinePythonCode(body)) {
+      throw new Error("Docker jobs require a command array or inline Python code");
+    }
+  }
+
+  if ((executionMode === "gpu" || executionMode === "remote-gpu") && !hasInlinePythonCode(body)) {
+    throw new Error("Remote GPU jobs require inline Python code");
+  }
+
+  if (requiresGpu && executionMode === "docker" && !String(body.image || "").trim()) {
+    throw new Error("GPU Docker jobs require an NVIDIA-compatible image");
+  }
+}
+
 function createJobRoutes(orchestrator) {
   const router = express.Router();
 
@@ -41,6 +80,7 @@ function createJobRoutes(orchestrator) {
 
   router.post("/", (req, res) => {
     try {
+      validateJobRequest(req.body || {});
       const response = orchestrator.createJob(req.body || {});
       return res.status(201).json(response);
     } catch (error) {

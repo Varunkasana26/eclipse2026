@@ -234,6 +234,21 @@ function createOrchestratorService(options = {}) {
     return record;
   }
 
+  function createWorkspace(payload = {}) {
+    const explicitId = payload.id || payload.workspace_id || payload.workspaceId || payload.name;
+    const workspace = explicitId ? createWorkspaceRecord(normalizeWorkspacePrefix(explicitId)) : createNextWorkspace();
+    return clone({
+      ...workspace,
+      status: getWorkspaceStatus(workspace),
+      is_complete: getWorkspaceStatus(workspace) === WORKSPACE_STATUS.COMPLETE,
+      lanes: {
+        low: { lane: JOB_LANES.LOW, node_id: workspace.low_node_id, node: workspace.low_node_id ? toPublicNode(store.nodes.get(workspace.low_node_id)) : null },
+        mid: { lane: JOB_LANES.MID, node_id: workspace.mid_node_id, node: workspace.mid_node_id ? toPublicNode(store.nodes.get(workspace.mid_node_id)) : null },
+        high: { lane: JOB_LANES.HIGH, node_id: workspace.high_node_id, node: workspace.high_node_id ? toPublicNode(store.nodes.get(workspace.high_node_id)) : null },
+      },
+    });
+  }
+
   function createNextWorkspace() {
     let workspaceId = "";
     do {
@@ -1006,6 +1021,10 @@ function createOrchestratorService(options = {}) {
     });
   }
 
+  function requiresDockerRuntime(job) {
+    return String(job?.execution_mode || "").trim().toLowerCase() === "docker";
+  }
+
   function getQueueReason(job) {
     if (isAwaitingRenderAssets(job)) {
       return "Waiting for render asset upload";
@@ -1033,6 +1052,20 @@ function createOrchestratorService(options = {}) {
 
     if (!onlineCandidates.length) {
       return `Waiting for an online provider in ${job.workspace_id}`;
+    }
+
+    if (requiresDockerRuntime(job)) {
+      const dockerReadyCandidates = onlineCandidates.filter((node) => getNodeDerived(node).docker_ready);
+      if (!dockerReadyCandidates.length) {
+        return `Waiting for a Docker-ready provider in ${job.workspace_id}`;
+      }
+    }
+
+    if (job.requires_gpu) {
+      const gpuReadyCandidates = onlineCandidates.filter((node) => getNodeDerived(node).gpu_available);
+      if (!gpuReadyCandidates.length) {
+        return `Waiting for a GPU-ready provider in ${job.workspace_id}`;
+      }
     }
 
     return `Waiting for backend capacity in ${job.workspace_id}`;
@@ -1119,6 +1152,7 @@ function createOrchestratorService(options = {}) {
         .filter(Boolean)
         .map((node) => ({ node, derived: getNodeDerived(node) }))
         .filter(({ derived }) => derived.status !== NODE_STATUS.OFFLINE)
+        .filter(({ derived }) => !requiresDockerRuntime(job) || derived.docker_ready)
         .filter(({ derived }) => !job.requires_gpu || derived.gpu_available)
         .filter(({ node, derived }) => derived.current_alloc_percent + job.estimated_gpu_percent <= node.max_alloc_percent)
         .sort((left, right) => {
@@ -1554,6 +1588,73 @@ function createOrchestratorService(options = {}) {
     assignQueuedJobs();
   }
 
+  function exportState() {
+    reconcileClusterState({ emitEvents: false });
+
+    return clone({
+      version: 1,
+      exported_at: nowIso(),
+      workspaceSequence: store.workspaceSequence,
+      workspaces: Array.from(store.workspaces.values()),
+      nodes: Array.from(store.nodes.values()),
+      jobs: Array.from(store.jobs.values()),
+      onboarding: Array.from(store.onboarding.values()),
+      queue: store.queue.snapshot(),
+    });
+  }
+
+  function importState(snapshot = {}) {
+    if (!snapshot || typeof snapshot !== "object") {
+      return false;
+    }
+
+    const nextWorkspaces = Array.isArray(snapshot.workspaces) ? snapshot.workspaces : [];
+    const nextNodes = Array.isArray(snapshot.nodes) ? snapshot.nodes : [];
+    const nextJobs = Array.isArray(snapshot.jobs) ? snapshot.jobs : [];
+    const nextOnboarding = Array.isArray(snapshot.onboarding) ? snapshot.onboarding : [];
+    const nextQueue = Array.isArray(snapshot.queue) ? snapshot.queue : [];
+
+    store.workspaces.clear();
+    store.nodes.clear();
+    store.jobs.clear();
+    store.onboarding.clear();
+    store.queue.items = [];
+    store.workspaceSequence = Number(snapshot.workspaceSequence) || 0;
+
+    for (const workspace of nextWorkspaces) {
+      if (workspace?.id) {
+        store.workspaces.set(workspace.id, clone(workspace));
+      }
+    }
+
+    for (const node of nextNodes) {
+      if (node?.node_id) {
+        store.nodes.set(node.node_id, clone(node));
+      }
+    }
+
+    for (const job of nextJobs) {
+      if (job?.id) {
+        store.jobs.set(job.id, clone(job));
+      }
+    }
+
+    for (const record of nextOnboarding) {
+      if (record?.workerId) {
+        store.onboarding.set(record.workerId, clone(record));
+      }
+    }
+
+    for (const jobId of nextQueue) {
+      if (store.jobs.has(jobId)) {
+        store.queue.enqueue(jobId);
+      }
+    }
+
+    reconcileClusterState({ emitEvents: false });
+    return true;
+  }
+
   return {
     events,
     assignQueuedJobs,
@@ -1561,6 +1662,7 @@ function createOrchestratorService(options = {}) {
     reconcileClusterState,
     listNodes,
     listWorkspaces,
+    createWorkspace,
     listOnboardingNodes,
     createOnboardingNode,
     getOnboardingEnvFile,
@@ -1577,6 +1679,8 @@ function createOrchestratorService(options = {}) {
     appendJobLogs,
     setJobResult,
     addJobInputArtifact,
+    exportState,
+    importState,
   };
 }
 
