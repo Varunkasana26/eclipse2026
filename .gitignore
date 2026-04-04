@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# Job outputs are generated at runtime.
+jobs/*/output/result.txt
+node_modules
