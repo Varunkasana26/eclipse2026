@@ -1,0 +1,4 @@
+agent/.env
+backend/.env
+frontend/.env
+frontend/build/

@@ -76,6 +76,24 @@ function parseList(value) {
     .filter(Boolean);
 }
 
+function parseBoolean(value, fallback) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["0", "false", "no", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return fallback;
+}
+
 const config = {
   env: process.env.NODE_ENV || "development",
   backendUrl: (
@@ -83,9 +101,17 @@ const config = {
     process.env.BACKEND_BASE_URL ||
     "http://127.0.0.1:5000"
   ).replace(/\/+$/, ""),
-  workerSecret: process.env.WORKER_SECRET || process.env.BACKEND_API_KEY || "",
+  workerSecret:
+    process.env.WORKER_TOKEN ||
+    process.env.WORKER_SECRET ||
+    process.env.BACKEND_API_KEY ||
+    "",
+  workspaceId: process.env.WORKSPACE_ID || "demo-workspace",
   workerId: process.env.WORKER_ID || process.env.WORKER_NAME || os.hostname(),
-  workerName: process.env.WORKER_NAME || "worker-node",
+  workerName: process.env.NODE_NAME || process.env.WORKER_NAME || "worker-node",
+  nodeLane: process.env.NODE_LANE || "",
+  maxAllocPercent: parseNumber(process.env.MAX_ALLOC_PERCENT, 70),
+  allowDocker: parseBoolean(process.env.ALLOW_DOCKER, true),
   workerTags: parseList(process.env.WORKER_TAGS),
   heartbeatIntervalMs: parseNumber(process.env.HEARTBEAT_INTERVAL_MS, 5000),
   pollIntervalMs: parseNumber(process.env.POLL_INTERVAL_MS, 4000),

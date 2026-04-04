@@ -5,6 +5,7 @@ function createStore() {
     nodes: new Map(),
     jobs: new Map(),
     queue: new InMemoryQueue(),
+    onboarding: new Map(),
   };
 }
 

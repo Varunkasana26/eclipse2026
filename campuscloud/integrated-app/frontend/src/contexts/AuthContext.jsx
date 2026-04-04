@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { API_BASE } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -37,7 +38,7 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (email, password) => {
     setIsLoading(true);
     try {
-      const response = await fetch('http://127.0.0.1:5000/api/auth/login', {
+      const response = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -45,17 +46,18 @@ export function AuthProvider({ children }) {
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await response.json();
+      const text = await response.text();
+      const data = text ? JSON.parse(text) : null;
 
       if (!response.ok) {
-        throw new Error(data.message || 'Login failed');
+        throw new Error(data?.message || 'Login failed');
       }
 
       // Store token and user info in state and localStorage
-      setToken(data.token);
-      setUser(data.user);
-      localStorage.setItem('auth_token', data.token);
-      localStorage.setItem('auth_user', JSON.stringify(data.user));
+      setToken(data?.token);
+      setUser(data?.user);
+      localStorage.setItem('auth_token', data?.token || '');
+      localStorage.setItem('auth_user', JSON.stringify(data?.user || null));
 
       return { success: true };
     } catch (error) {
