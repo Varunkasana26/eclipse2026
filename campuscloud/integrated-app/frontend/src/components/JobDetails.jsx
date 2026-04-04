@@ -8,7 +8,22 @@ function formatTime(value) {
   return new Date(value).toLocaleString();
 }
 
+function getArtifactUrl(artifact) {
+  return artifact?.download_url || artifact?.url || null;
+}
+
+function isPreviewableImage(url) {
+  return /\.(png|jpe?g|gif|webp)$/i.test(String(url || ''));
+}
+
 function JobDetails({ job }) {
+  const inputArtifacts = Array.isArray(job?.metadata?.input_artifacts) ? job.metadata.input_artifacts : [];
+  const outputArtifacts = Array.isArray(job?.result?.artifacts)
+    ? job.result.artifacts
+    : Array.isArray(job?.result?.output_files)
+      ? job.result.output_files
+      : [];
+
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6">
       <h2 className="text-xl font-semibold mb-5">Selected Job</h2>
@@ -19,6 +34,7 @@ function JobDetails({ job }) {
           <div className="grid lg:grid-cols-3 sm:grid-cols-2 gap-3 text-sm">
             {[
               ['Status', job.status],
+              ['Job Type', job.metadata?.job_type || 'default'],
               ['Assigned Node', job.node_id || 'Pending'],
               ['Workspace', job.workspace_id],
               ['Assigned Lane', job.assigned_lane || 'Pending'],
@@ -61,6 +77,38 @@ function JobDetails({ job }) {
             </pre>
           </div>
 
+          {job.metadata?.render ? (
+            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
+              <p className="text-sm text-slate-400 mb-3">Render Metadata</p>
+              <pre className="text-xs text-slate-200 whitespace-pre-wrap break-words">
+                {JSON.stringify(job.metadata.render, null, 2)}
+              </pre>
+            </div>
+          ) : null}
+
+          {inputArtifacts.length > 0 ? (
+            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
+              <p className="text-sm text-slate-400 mb-3">Input Artifacts</p>
+              <div className="space-y-2 text-sm">
+                {inputArtifacts.map((artifact) => {
+                  const url = getArtifactUrl(artifact);
+                  return (
+                    <div key={artifact.storage_path || artifact.name} className="rounded-xl border border-slate-800 px-3 py-2">
+                      <p className="text-slate-100">{artifact.name || artifact.storage_path}</p>
+                      {url ? (
+                        <a href={url} target="_blank" rel="noreferrer" className="text-cyan-300 text-xs break-all">
+                          {url}
+                        </a>
+                      ) : (
+                        <p className="text-xs text-slate-400 break-all">{artifact.storage_path || 'Stored locally'}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
           <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
             <p className="text-sm text-slate-400 mb-3">Live Logs</p>
             <pre className="text-xs text-cyan-100 whitespace-pre-wrap break-words max-h-[320px] overflow-y-auto">
@@ -73,6 +121,32 @@ function JobDetails({ job }) {
           {job.error ? (
             <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
               {job.error}
+            </div>
+          ) : null}
+
+          {outputArtifacts.length > 0 ? (
+            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
+              <p className="text-sm text-slate-400 mb-3">Output Artifacts</p>
+              <div className="grid gap-3">
+                {outputArtifacts.map((artifact) => {
+                  const url = getArtifactUrl(artifact);
+                  return (
+                    <div key={artifact.storage_path || artifact.name} className="rounded-xl border border-slate-800 p-3">
+                      <p className="text-sm text-slate-100">{artifact.name || artifact.storage_path}</p>
+                      {url ? (
+                        <a href={url} target="_blank" rel="noreferrer" className="text-cyan-300 text-xs break-all">
+                          {url}
+                        </a>
+                      ) : (
+                        <p className="text-xs text-slate-400 break-all">{artifact.storage_path || 'Artifact available in result payload'}</p>
+                      )}
+                      {url && isPreviewableImage(url) ? (
+                        <img src={url} alt={artifact.name || 'artifact preview'} className="mt-3 max-h-48 rounded-xl border border-slate-800" />
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           ) : null}
 

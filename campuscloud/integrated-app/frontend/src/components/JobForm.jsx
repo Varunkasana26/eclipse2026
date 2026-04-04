@@ -7,24 +7,40 @@ const defaultCommand =
 const dockerDemoCommand =
   'python -c "print(\'CampusCloud docker demo job\')"';
 
+const defaultRenderCommand =
+  'blender -b /workspace/input/scene.blend -s 1 -e 10 -a';
+
 const jobPresets = {
   local: {
+    jobType: 'python',
     image: 'node:20-alpine',
     commandText: defaultCommand,
     executionMode: 'local',
     requiresGpu: false,
     gpuProfile: 'any',
     envText: '{}',
+    renderEngine: 'blender',
+    renderFrameStart: '1',
+    renderFrameEnd: '10',
+    renderOutputFormat: 'png',
+    renderFiles: [],
   },
   docker: {
+    jobType: 'python',
     image: 'python:3.11-slim',
     commandText: dockerDemoCommand,
     executionMode: 'docker',
     requiresGpu: false,
     gpuProfile: 'any',
     envText: '{}',
+    renderEngine: 'blender',
+    renderFrameStart: '1',
+    renderFrameEnd: '10',
+    renderOutputFormat: 'png',
+    renderFiles: [],
   },
   gpu: {
+    jobType: 'python',
     image: 'pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime',
     commandText: 'python -c "print(\'gpu-ready demo\')"',
     executionMode: 'docker',
@@ -32,9 +48,25 @@ const jobPresets = {
     gpuProfile: 'mid',
     envText: '{}',
   },
+  render: {
+    jobType: 'render',
+    image: 'blender:latest',
+    commandText: defaultRenderCommand,
+    executionMode: 'docker',
+    requiresGpu: true,
+    gpuProfile: 'mid',
+    envText: '{}',
+    renderEngine: 'blender',
+    renderFrameStart: '1',
+    renderFrameEnd: '10',
+    renderOutputFormat: 'png',
+    renderFiles: [],
+  },
 };
 
 function JobForm({ form, setForm, onSubmit, isSubmitting, submitError, workspaces }) {
+  const isRenderJob = form.jobType === 'render';
+
   function applyPreset(presetKey) {
     const preset = jobPresets[presetKey];
     if (!preset) {
@@ -63,9 +95,23 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError, workspace
         <button type="button" onClick={() => applyPreset('gpu')} className="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-2 text-sm text-slate-100">
           Load GPU
         </button>
+        <button type="button" onClick={() => applyPreset('render')} className="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-2 text-sm text-slate-100">
+          Load Render
+        </button>
       </div>
       <form className="space-y-4" onSubmit={onSubmit}>
         <div className="grid sm:grid-cols-2 gap-4">
+          <label className="block">
+            <span className="block text-sm text-slate-300 mb-2">Job Type</span>
+            <select
+              value={form.jobType}
+              onChange={(event) => setForm((current) => ({ ...current, jobType: event.target.value }))}
+              className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
+            >
+              <option value="python">Python / Command</option>
+              <option value="render">Render</option>
+            </select>
+          </label>
           <label className="block">
             <span className="block text-sm text-slate-300 mb-2">Workspace ID</span>
             <select
@@ -97,7 +143,7 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError, workspace
         </div>
 
         <div>
-          <label className="block text-sm text-slate-300 mb-2">Docker Image</label>
+          <label className="block text-sm text-slate-300 mb-2">{isRenderJob ? 'Render Image' : 'Docker Image'}</label>
           <input
             value={form.image}
             onChange={(event) => setForm((current) => ({ ...current, image: event.target.value }))}
@@ -107,13 +153,13 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError, workspace
         </div>
 
         <div>
-          <label className="block text-sm text-slate-300 mb-2">Command</label>
+          <label className="block text-sm text-slate-300 mb-2">{isRenderJob ? 'Render Command' : 'Command'}</label>
           <textarea
             value={form.commandText}
             onChange={(event) => setForm((current) => ({ ...current, commandText: event.target.value }))}
             rows={4}
             className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-sm text-slate-100 outline-none focus:border-cyan-400"
-            placeholder={defaultCommand}
+            placeholder={isRenderJob ? defaultRenderCommand : defaultCommand}
           />
         </div>
 
@@ -148,6 +194,78 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError, workspace
           </label>
         </div>
 
+        {isRenderJob ? (
+          <>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <label className="block">
+                <span className="block text-sm text-slate-300 mb-2">Render Engine</span>
+                <select
+                  value={form.renderEngine}
+                  onChange={(event) => setForm((current) => ({ ...current, renderEngine: event.target.value }))}
+                  className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
+                >
+                  <option value="blender">Blender</option>
+                  <option value="ffmpeg">ffmpeg</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="block text-sm text-slate-300 mb-2">Frame Start</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={form.renderFrameStart}
+                  onChange={(event) => setForm((current) => ({ ...current, renderFrameStart: event.target.value }))}
+                  className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
+                />
+              </label>
+              <label className="block">
+                <span className="block text-sm text-slate-300 mb-2">Frame End</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={form.renderFrameEnd}
+                  onChange={(event) => setForm((current) => ({ ...current, renderFrameEnd: event.target.value }))}
+                  className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
+                />
+              </label>
+              <label className="block">
+                <span className="block text-sm text-slate-300 mb-2">Output Format</span>
+                <input
+                  value={form.renderOutputFormat}
+                  onChange={(event) => setForm((current) => ({ ...current, renderOutputFormat: event.target.value }))}
+                  className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
+                  placeholder="png"
+                />
+              </label>
+            </div>
+
+            <div>
+              <label className="block text-sm text-slate-300 mb-2">Render Assets</label>
+              <input
+                type="file"
+                multiple
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    renderFiles: Array.from(event.target.files || []),
+                  }))
+                }
+                className="block w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-sm text-slate-100"
+              />
+              <p className="text-xs text-slate-400 mt-2">
+                Selected files stay local until submit. They are uploaded only for render jobs after the job record is created.
+              </p>
+              {Array.isArray(form.renderFiles) && form.renderFiles.length > 0 ? (
+                <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-950 p-4 text-xs text-slate-300">
+                  {form.renderFiles.map((file) => (
+                    <p key={`${file.name}-${file.size}`}>{file.name} ({file.size} bytes)</p>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </>
+        ) : null}
+
         <div>
           <label className="block text-sm text-slate-300 mb-2">Environment JSON</label>
           <textarea
@@ -165,7 +283,9 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError, workspace
           </div>
         ) : null}
         <p className="text-xs text-slate-400">
-          The backend assigns the job to the best node in the selected workspace and keeps queueing and capacity limits internal.
+          {isRenderJob
+            ? 'Render jobs are queued after asset upload completes. Python jobs still follow the existing backend assignment flow.'
+            : 'The backend assigns the job to the best node in the selected workspace and keeps queueing and capacity limits internal.'}
         </p>
         <button
           type="submit"

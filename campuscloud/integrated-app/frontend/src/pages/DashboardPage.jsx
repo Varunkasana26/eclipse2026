@@ -10,6 +10,7 @@ import {
   fetchOnboardingNodes,
   fetchWorkspaces,
   submitJob,
+  uploadJobAsset,
 } from '../services/api';
 import { connectToEventStream } from '../services/socket';
 import JobsPage from './JobsPage';
@@ -52,6 +53,7 @@ function DashboardPage() {
   const [submitError, setSubmitError] = useState('');
   const [createNodeError, setCreateNodeError] = useState('');
   const [form, setForm] = useState({
+    jobType: 'python',
     workspaceId: '',
     image: 'node:20-alpine',
     commandText: defaultCommand,
@@ -59,6 +61,11 @@ function DashboardPage() {
     executionMode: 'local',
     requiresGpu: false,
     gpuProfile: 'any',
+    renderEngine: 'blender',
+    renderFrameStart: '1',
+    renderFrameEnd: '10',
+    renderOutputFormat: 'png',
+    renderFiles: [],
   });
   const [onboardingForm, setOnboardingForm] = useState({
     workerName: 'Windows GPU Node',
@@ -222,6 +229,26 @@ function DashboardPage() {
             : form.gpuProfile === 'mid'
               ? 10000
               : 0;
+      const isRenderJob = form.jobType === 'render';
+      const renderFiles = Array.isArray(form.renderFiles) ? form.renderFiles : [];
+      const metadata = {
+        job_type: isRenderJob ? 'render' : 'python',
+      };
+
+      if (isRenderJob) {
+        metadata.asset_upload_expected = renderFiles.length > 0;
+        metadata.assets_ready = renderFiles.length === 0;
+        metadata.input_artifacts = [];
+        metadata.output_artifacts = {
+          expected_pattern: `frame_####.${(form.renderOutputFormat || 'png').trim() || 'png'}`,
+        };
+        metadata.render = {
+          engine: form.renderEngine || 'blender',
+          frame_start: Math.max(1, Number(form.renderFrameStart) || 1),
+          frame_end: Math.max(1, Number(form.renderFrameEnd) || Number(form.renderFrameStart) || 1),
+          output_format: (form.renderOutputFormat || 'png').trim() || 'png',
+        };
+      }
 
       const response = await submitJob({
         image: form.image.trim() || 'node:20-alpine',
@@ -234,12 +261,37 @@ function DashboardPage() {
           gpu_required: form.requiresGpu,
           min_gpu_memory_mb: minGpuMemoryMb,
         },
+        metadata,
       });
 
       setJobs((current) => upsertMany(current, [response?.job, ...(response?.children || [])].filter(Boolean)));
       if (response?.job?.id) {
         setSelectedJobId(response.job.id);
       }
+
+      if (isRenderJob && response?.job?.id && renderFiles.length > 0) {
+        let latestJob = response.job;
+
+        for (let index = 0; index < renderFiles.length; index += 1) {
+          const uploadResponse = await uploadJobAsset(response.job.id, renderFiles[index], {
+            complete: index === renderFiles.length - 1,
+          });
+
+          if (uploadResponse?.job) {
+            latestJob = uploadResponse.job;
+            setJobs((current) => upsertById(current, uploadResponse.job));
+          }
+        }
+
+        if (latestJob?.id) {
+          setSelectedJobId(latestJob.id);
+        }
+      }
+
+      setForm((current) => ({
+        ...current,
+        renderFiles: current.jobType === 'render' ? [] : current.renderFiles,
+      }));
     } catch (error) {
       setSubmitError(error.message);
     } finally {

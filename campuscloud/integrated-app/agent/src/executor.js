@@ -1,6 +1,7 @@
 import config from "./config.js";
 import { extractPythonCodeFromJob, runDockerJob } from "./dockerRunner.js";
 import { runLocalJob, runSimulatedJob } from "./fallbackRunner.js";
+import { runRenderJob } from "./renderRunner.js";
 import logger from "./utils/logger.js";
 
 async function emitFallbackLog(hooks, message) {
@@ -21,6 +22,10 @@ function shouldUseGpuRunner(job) {
       Boolean(job.resource_requirements?.gpu_required)
     )
   );
+}
+
+function isRenderJob(job) {
+  return String(job?.metadata?.job_type || "").toLowerCase() === "render";
 }
 
 function buildFallbackJob(job, pythonCode) {
@@ -45,6 +50,10 @@ async function runJob(job, hooks = {}, context = {}) {
 
   if (config.executorMode === "mock") {
     return runSimulatedJob(job, hooks);
+  }
+
+  if (isRenderJob(job)) {
+    return runRenderJob(job, hooks, context);
   }
 
   if (shouldUseGpuRunner(job)) {

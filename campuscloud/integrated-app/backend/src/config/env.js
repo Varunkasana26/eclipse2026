@@ -1,3 +1,4 @@
+const path = require("node:path");
 const dotenv = require("dotenv");
 
 dotenv.config();
@@ -23,6 +24,9 @@ module.exports = {
   DEFAULT_WORKSPACE_ID: process.env.DEFAULT_WORKSPACE_ID || "demo-workspace",
   DEFAULT_MAX_ALLOC_PERCENT: parseNumber(process.env.DEFAULT_MAX_ALLOC_PERCENT, 70),
   WORKER_SECRET: process.env.WORKER_SECRET || "",
+  ARTIFACT_STORAGE_DIR:
+    process.env.ARTIFACT_STORAGE_DIR || path.resolve(__dirname, "..", "..", "storage"),
+  MAX_ASSET_UPLOAD_BYTES: parseNumber(process.env.MAX_ASSET_UPLOAD_BYTES, 100 * 1024 * 1024),
   CORS_ORIGINS: rawCorsOrigins
     .split(",")
     .map((origin) => origin.trim())

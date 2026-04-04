@@ -18,6 +18,35 @@ function safeExecutable(command) {
   return null;
 }
 
+function isRenderJob(job) {
+  return String(job?.metadata?.job_type || "").toLowerCase() === "render";
+}
+
+function getRequestedExecutable(job) {
+  return String(job?.command?.[0] || "").trim() || "unknown";
+}
+
+async function failUnsupportedCommand(job, hooks = {}, startedAt = Date.now()) {
+  const executable = getRequestedExecutable(job);
+  const error = isRenderJob(job)
+    ? `Render jobs require remote render execution. Unsupported local executable: ${executable}`
+    : `Unsupported local executable for fallback runner: ${executable}`;
+  const result = {
+    exit_code: 1,
+    output_files: [],
+    duration_ms: Date.now() - startedAt,
+    error,
+  };
+
+  await hooks.onFail?.(result);
+
+  return {
+    status: "failed",
+    logs: [],
+    result,
+  };
+}
+
 async function runSimulatedJob(job, hooks = {}) {
   const startedAt = Date.now();
   const durationMs = job.mock_duration_ms || config.mockJobDurationMs;
@@ -56,13 +85,13 @@ async function runSimulatedJob(job, hooks = {}) {
 
 async function runLocalJob(job, hooks = {}) {
   return new Promise((resolve) => {
+    const startedAt = Date.now();
     const executable = safeExecutable(job.command);
     if (!executable) {
-      runSimulatedJob(job, hooks).then(resolve);
+      failUnsupportedCommand(job, hooks, startedAt).then(resolve);
       return;
     }
 
-    const startedAt = Date.now();
     const proc = spawn(executable, job.command.slice(1), {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,

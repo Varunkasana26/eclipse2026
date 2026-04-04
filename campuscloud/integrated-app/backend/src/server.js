@@ -12,6 +12,7 @@ const { createWorkspaceRoutes } = require("./routes/workspaces.routes");
 const { createHealthRoutes } = require("./routes/health.routes");
 const { createOnboardingRoutes } = require("./routes/onboarding.routes");
 const { startAssignmentScheduler } = require("./scheduler/assignmentScheduler");
+const { getArtifactStorageRoot } = require("./services/jobAssetStorage.service");
 const { createOrchestratorService } = require("./services/orchestrator.service");
 const { createSocketServer } = require("./sockets/wsServer");
 
@@ -53,6 +54,7 @@ function createRuntime(port) {
   );
   app.use(morgan("dev"));
   app.use(express.json({ limit: "1mb" }));
+  app.use("/artifacts", express.static(getArtifactStorageRoot()));
 
   app.use("/health", createHealthRoutes(orchestrator));
   app.use("/api/auth", createAuthRoutes());

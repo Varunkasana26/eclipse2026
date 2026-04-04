@@ -1,4 +1,6 @@
 const express = require("express");
+const env = require("../config/env");
+const { storeJobInputArtifact } = require("../services/jobAssetStorage.service");
 
 function getBearerToken(req) {
   const header = req.headers.authorization || "";
@@ -7,6 +9,27 @@ function getBearerToken(req) {
   }
 
   return header.slice("Bearer ".length).trim();
+}
+
+function decodeHeaderValue(value) {
+  try {
+    return decodeURIComponent(String(value || ""));
+  } catch {
+    return String(value || "");
+  }
+}
+
+function getPublicBaseUrl(req) {
+  const forwardedProto = req.headers["x-forwarded-proto"];
+  const forwardedHost = req.headers["x-forwarded-host"];
+  const protocol = String(forwardedProto || req.protocol || "http").split(",")[0].trim();
+  const host = String(forwardedHost || req.get("host") || "").split(",")[0].trim();
+
+  if (protocol && host) {
+    return `${protocol}://${host}`;
+  }
+
+  return env.BACKEND_PUBLIC_URL;
 }
 
 function createJobRoutes(orchestrator) {
@@ -33,6 +56,48 @@ function createJobRoutes(orchestrator) {
 
     return res.json({ job });
   });
+
+  router.post(
+    "/:jobId/assets",
+    express.raw({ type: "application/octet-stream", limit: env.MAX_ASSET_UPLOAD_BYTES }),
+    async (req, res) => {
+      try {
+        const currentJob = orchestrator.getJob(req.params.jobId);
+        if (!currentJob) {
+          return res.status(404).json({ error: "Job not found" });
+        }
+
+        const fileName = decodeHeaderValue(req.headers["x-file-name"]);
+        if (!fileName) {
+          return res.status(400).json({ error: "x-file-name header is required" });
+        }
+
+        const fileBuffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from([]);
+        if (fileBuffer.length === 0) {
+          return res.status(400).json({ error: "Asset upload body is empty" });
+        }
+
+        const storedArtifact = await storeJobInputArtifact({
+          jobId: req.params.jobId,
+          fileName,
+          contentType: decodeHeaderValue(req.headers["x-content-type"]) || "application/octet-stream",
+          buffer: fileBuffer,
+        });
+
+        const baseUrl = getPublicBaseUrl(req);
+        const artifact = {
+          ...storedArtifact,
+          download_url: `${baseUrl.replace(/\/+$/, "")}/artifacts/${storedArtifact.storage_path}`,
+        };
+        const complete = String(req.headers["x-upload-complete"] || "").toLowerCase() === "true";
+        const job = orchestrator.addJobInputArtifact(req.params.jobId, artifact, { complete });
+
+        return res.status(201).json({ ok: true, artifact, job });
+      } catch (error) {
+        return res.status(400).json({ error: error.message });
+      }
+    }
+  );
 
   router.post("/:jobId/status", (req, res) => {
     try {
