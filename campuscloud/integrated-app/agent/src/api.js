@@ -1,6 +1,13 @@
 import fetch from "node-fetch";
 import config from "./config.js";
 import logger from "./utils/logger.js";
+import contract from "../../shared/runtimeContract.cjs";
+
+const {
+  buildHeartbeatPayload,
+  buildJobStatusPayload,
+  buildWorkerRegistrationPayload
+} = contract;
 
 async function request(method, path, body) {
   const controller = new AbortController();
@@ -44,31 +51,34 @@ async function request(method, path, body) {
 }
 
 async function registerWorker(systemInfo) {
-  return request("POST", "/api/workers/register", {
-    worker_id: config.workerId || systemInfo.hostname,
-    worker_name: config.workerName,
-    agent_version: "1.1.0",
-    executor_mode: config.executorMode,
-    tags: config.workerTags,
-    hostname: systemInfo.hostname,
-    platform: systemInfo.platform,
-    arch: systemInfo.arch,
-    os_type: systemInfo.os_type,
-    node_version: systemInfo.node_version,
-    cpu: systemInfo.cpu,
-    ram: systemInfo.ram,
-    gpu: systemInfo.gpu,
-    docker: systemInfo.docker
-  });
+  return request(
+    "POST",
+    "/api/workers/register",
+    buildWorkerRegistrationPayload({
+      workerId: config.workerId || systemInfo.hostname,
+      workerName: config.workerName,
+      workerTags: config.workerTags,
+      executorMode: config.executorMode,
+      workspaceId: config.workspaceId,
+      nodeLane: config.nodeLane,
+      maxAllocPercent: config.maxAllocPercent,
+      allowDocker: config.allowDocker,
+      systemInfo,
+      agentVersion: "1.1.0"
+    })
+  );
 }
 
 async function sendHeartbeat(status, currentJobId) {
-  return request("POST", "/api/workers/heartbeat", {
-    worker_id: config.workerId || config.workerName,
-    status,
-    current_job_id: currentJobId || null,
-    timestamp: new Date().toISOString()
-  });
+  return request(
+    "POST",
+    "/api/workers/heartbeat",
+    buildHeartbeatPayload({
+      workerId: config.workerId || config.workerName,
+      status,
+      currentJobId
+    })
+  );
 }
 
 async function pollForJob() {
@@ -77,12 +87,15 @@ async function pollForJob() {
 }
 
 async function updateJobStatus(jobId, status, extra = {}) {
-  return request("POST", `/api/jobs/${encodeURIComponent(jobId)}/status`, {
-    worker_id: config.workerId || config.workerName,
-    status,
-    timestamp: new Date().toISOString(),
-    ...extra
-  });
+  return request(
+    "POST",
+    `/api/jobs/${encodeURIComponent(jobId)}/status`,
+    buildJobStatusPayload({
+      workerId: config.workerId || config.workerName,
+      status,
+      extra
+    })
+  );
 }
 
 async function sendJobLogs(jobId, logs) {

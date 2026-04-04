@@ -40,12 +40,6 @@ async function main() {
     });
   }
 
-  if (config.executorMode === "docker" && !systemInfo.docker.docker_available) {
-    logger.warn("Docker executor mode selected but Docker is unavailable", {
-      worker_id: config.workerId || systemInfo.hostname
-    });
-  }
-
   await attemptRegistration(systemInfo);
   const agent = new WorkerAgent(systemInfo);
 

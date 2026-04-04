@@ -113,6 +113,7 @@ function JobDetails({ job }) {
     <div className="bg-white/5 backdrop-blur-lg border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.36)] rounded-2xl p-6 h-full flex flex-col">
       <h2 className="text-xl font-semibold font-sans mb-5">Selected Job</h2>
       {!job ? (
+<<<<<<< HEAD
         <EmptyTerminalState />
       ) : (
         <div className="space-y-4 flex-1 flex flex-col">
@@ -132,16 +133,75 @@ function JobDetails({ job }) {
             <div className="flex-1 min-w-[140px] bg-black/50 border border-space-accent/10 shadow-sm rounded-xl p-4 transition-colors hover:border-space-accent/30">
               <p className="text-slate-400 font-sans">Updated</p>
               <p className="font-semibold font-mono mt-2 text-white">{formatTime(job.updatedAt)}</p>
+=======
+        <div className="text-slate-400">Select a job to inspect live scheduler state and logs.</div>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid lg:grid-cols-3 sm:grid-cols-2 gap-3 text-sm">
+            {[
+              ['Status', job.status],
+              ['Assigned Node', job.node_id || 'Pending'],
+              ['Workspace', job.workspace_id],
+              ['Assigned Lane', job.assigned_lane || 'Pending'],
+              ['Planned Lane', job.planned_lane || 'Auto'],
+              ['Requires GPU', job.requires_gpu ? 'Yes' : 'No'],
+              ['Queue reason', job.queue_reason || 'n/a'],
+              ['Parent Job', job.parent_job_id || 'Root'],
+              ['Chunk', job.parent_job_id ? `${job.chunk_index}/${job.chunk_total}` : 'n/a'],
+              ['Chunk Count', job.chunk_count || 1],
+              ['Created', formatTime(job.created_at || job.createdAt)],
+              ['Updated', formatTime(job.updated_at || job.updatedAt)],
+            ].map(([label, value]) => (
+              <div key={label} className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
+                <p className="text-slate-400">{label}</p>
+                <p className="font-semibold mt-2 break-words">{value}</p>
+              </div>
+            ))}
+          </div>
+
+          {job.is_parent && job.chunk_progress ? (
+            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 text-sm text-slate-200">
+              <p className="text-slate-400 mb-3">Chunk Progress</p>
+              <p>Queued: {job.chunk_progress.queued}</p>
+              <p>Assigned: {job.chunk_progress.assigned}</p>
+              <p>Running: {job.chunk_progress.running}</p>
+              <p>Completed: {job.chunk_progress.completed}</p>
+              <p>Failed: {job.chunk_progress.failed}</p>
+>>>>>>> vkasana-be24/feat/campuscloud-recovery-push
             </div>
+          ) : null}
+
+          <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
+            <p className="text-sm text-slate-400 mb-3">Command</p>
+            <pre className="text-xs text-slate-200 whitespace-pre-wrap break-words">{job.command || 'No command'}</pre>
+          </div>
+
+          <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
+            <p className="text-sm text-slate-400 mb-3">Environment</p>
+            <pre className="text-xs text-slate-200 whitespace-pre-wrap break-words">
+              {JSON.stringify(job.env || {}, null, 2)}
+            </pre>
           </div>
 
           <div className="flex-1 min-h-[360px] flex flex-col">
             <LogTerminal job={job} />
           </div>
 
+<<<<<<< HEAD
           <div className="bg-black/50 border border-space-accent/10 shadow-sm rounded-xl p-4 transition-colors hover:border-space-accent/30 shrink-0">
             <p className="text-sm text-slate-400 mb-3 font-sans">Result Payload</p>
             <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words font-mono max-h-32 overflow-y-auto custom-scrollbar">
+=======
+          {job.error ? (
+            <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+              {job.error}
+            </div>
+          ) : null}
+
+          <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
+            <p className="text-sm text-slate-400 mb-3">Result Payload</p>
+            <pre className="text-xs text-slate-200 whitespace-pre-wrap break-words">
+>>>>>>> vkasana-be24/feat/campuscloud-recovery-push
               {JSON.stringify(job.result || {}, null, 2)}
             </pre>
           </div>
@@ -152,3 +212,4 @@ function JobDetails({ job }) {
 }
 
 export default JobDetails;
+

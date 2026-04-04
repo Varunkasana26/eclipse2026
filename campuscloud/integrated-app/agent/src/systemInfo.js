@@ -20,7 +20,7 @@ function parseNumeric(value) {
 async function getGpuInfo() {
   try {
     const { stdout } = await execFileAsync("nvidia-smi", [
-      "--query-gpu=name,memory.total,driver_version,uuid,compute_cap,power.limit",
+      "--query-gpu=name,memory.total,memory.used,utilization.gpu,driver_version,uuid,compute_cap,power.limit",
       "--format=csv,noheader,nounits"
     ]);
 
@@ -29,17 +29,20 @@ async function getGpuInfo() {
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line, index) => {
-        const [name, memoryTotal, driverVersion, uuid, computeCap, powerLimit] = line
+        const [name, memoryTotal, memoryUsed, utilizationPercent, driverVersion, uuid, computeCap, powerLimit] = line
           .split(",")
           .map((part) => part.trim());
 
         const memoryMb = parseNumeric(memoryTotal) ?? 0;
+        const memoryUsedMb = parseNumeric(memoryUsed) ?? 0;
 
         return {
           index,
           name,
           memory_mb: memoryMb,
+          memory_used_mb: memoryUsedMb,
           memory_gb: Number((memoryMb / 1024).toFixed(2)),
+          utilization_percent: parseNumeric(utilizationPercent) ?? 0,
           driver_version: driverVersion || "",
           uuid: uuid || "",
           compute_cap: computeCap || "",

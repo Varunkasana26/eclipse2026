@@ -1,6 +1,7 @@
 import config from "./config.js";
 import logger from "./utils/logger.js";
 import {
+  registerWorker,
   pollForJob,
   sendHeartbeat,
   sendJobLogs,
@@ -9,20 +10,23 @@ import {
 } from "./api.js";
 import { startHeartbeatLoop } from "./heartbeat.js";
 import { runJob } from "./executor.js";
+import contract from "../../shared/runtimeContract.cjs";
 
 const LOG_FLUSH_INTERVAL_MS = 2000;
+const { JOB_STATUS, NODE_STATUS } = contract;
 
 class WorkerAgent {
   constructor(systemInfo) {
     this.systemInfo = systemInfo;
     this.workerId = config.workerId || systemInfo.hostname;
-    this.status = "idle";
+    this.status = NODE_STATUS.IDLE;
     this.currentJobId = null;
     this.heartbeatTimer = null;
     this.pollTimer = null;
     this.logFlushTimer = null;
     this.pollInFlight = false;
     this.logBuffer = [];
+    this.registrationInFlight = null;
   }
 
   async start() {
@@ -57,6 +61,10 @@ class WorkerAgent {
     try {
       await sendHeartbeat(this.status, this.currentJobId);
     } catch (error) {
+      if (error.message.includes("Worker not registered")) {
+        await this.ensureRegistered();
+      }
+
       logger.warn("Heartbeat failed", { worker_id: this.workerId, error: error.message });
     }
   }
@@ -81,9 +89,35 @@ class WorkerAgent {
       }
 
       await this.processJob(job);
+    } catch (error) {
+      if (error.message.includes("Worker not registered")) {
+        await this.ensureRegistered();
+        return;
+      }
+
+      throw error;
     } finally {
       this.pollInFlight = false;
     }
+  }
+
+  async ensureRegistered() {
+    if (this.registrationInFlight) {
+      return this.registrationInFlight;
+    }
+
+    this.registrationInFlight = registerWorker(this.systemInfo)
+      .then(() => {
+        logger.info("Worker registration refreshed", {
+          worker_id: this.workerId,
+          backend_url: config.backendUrl
+        });
+      })
+      .finally(() => {
+        this.registrationInFlight = null;
+      });
+
+    return this.registrationInFlight;
   }
 
   extractJob(response) {
@@ -95,7 +129,7 @@ class WorkerAgent {
   }
 
   async processJob(job) {
-    this.status = "busy";
+    this.status = NODE_STATUS.BUSY;
     this.currentJobId = job.job_id;
     this.logBuffer = [];
 
@@ -107,7 +141,7 @@ class WorkerAgent {
     });
 
     try {
-      await updateJobStatus(job.job_id, "running", {
+      await updateJobStatus(job.job_id, JOB_STATUS.RUNNING, {
         executor_mode: config.executorMode
       });
 
@@ -127,14 +161,14 @@ class WorkerAgent {
 
       await this.flushLogs();
 
-      if (result.status === "completed") {
-        await updateJobStatus(job.job_id, "completed", {
+      if (result.status === JOB_STATUS.COMPLETED) {
+        await updateJobStatus(job.job_id, JOB_STATUS.COMPLETED, {
           executor_mode: config.executorMode
         });
         await sendJobResult(job.job_id, result.result || {});
         logger.info("Job completed", { worker_id: this.workerId, job_id: job.job_id });
       } else {
-        await updateJobStatus(job.job_id, "failed", {
+        await updateJobStatus(job.job_id, JOB_STATUS.FAILED, {
           executor_mode: config.executorMode
         });
         await sendJobResult(job.job_id, result.result || {});
@@ -152,7 +186,7 @@ class WorkerAgent {
       });
 
       await this.flushLogs();
-      await updateJobStatus(job.job_id, "failed", {
+      await updateJobStatus(job.job_id, JOB_STATUS.FAILED, {
         executor_mode: config.executorMode,
         error: error.message
       });
@@ -162,7 +196,7 @@ class WorkerAgent {
         error: error.message
       });
     } finally {
-      this.status = "idle";
+      this.status = NODE_STATUS.IDLE;
       this.currentJobId = null;
       this.logBuffer = [];
     }

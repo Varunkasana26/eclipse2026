@@ -1,4 +1,5 @@
 const express = require("express");
+const { JOB_STATUS, NODE_STATUS } = require("../../../shared/runtimeContract.cjs");
 
 function createHealthRoutes(orchestrator) {
   const router = express.Router();
@@ -11,10 +12,10 @@ function createHealthRoutes(orchestrator) {
       status: "ok",
       counts: {
         nodes: nodes.length,
-        availableNodes: nodes.filter((node) => node.status === "idle").length,
+        availableNodes: nodes.filter((node) => node.status === NODE_STATUS.IDLE).length,
         jobs: jobs.length,
-        queuedJobs: jobs.filter((job) => job.status === "queued").length,
-        runningJobs: jobs.filter((job) => job.status === "running" || job.status === "assigned").length,
+        queuedJobs: jobs.filter((job) => job.status === JOB_STATUS.QUEUED).length,
+        runningJobs: jobs.filter((job) => job.status === JOB_STATUS.RUNNING || job.status === JOB_STATUS.ASSIGNED).length,
       },
       timestamp: new Date().toISOString(),
     });

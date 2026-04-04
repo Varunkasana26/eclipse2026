@@ -76,20 +76,55 @@ function parseList(value) {
     .filter(Boolean);
 }
 
+function parseBoolean(value, fallback) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["0", "false", "no", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return fallback;
+}
+
+function normalizeUrl(value, fallback) {
+  const resolved = String(value || fallback || "").trim();
+  return resolved.replace(/\/+$/, "");
+}
+
 const config = {
   env: process.env.NODE_ENV || "development",
-  backendUrl: (
+  backendUrl: normalizeUrl(
     process.env.BACKEND_URL ||
     process.env.BACKEND_BASE_URL ||
     "http://127.0.0.1:5000"
-  ).replace(/\/+$/, ""),
-  workerSecret: process.env.WORKER_SECRET || process.env.BACKEND_API_KEY || "",
+  ),
+  gpuServerUrl: normalizeUrl(process.env.GPU_SERVER_URL, "http://127.0.0.1:8000"),
+  workerSecret:
+    process.env.WORKER_TOKEN ||
+    process.env.WORKER_SECRET ||
+    process.env.BACKEND_API_KEY ||
+    "",
+  workspaceId: process.env.WORKSPACE_ID || "demo-workspace",
   workerId: process.env.WORKER_ID || process.env.WORKER_NAME || os.hostname(),
-  workerName: process.env.WORKER_NAME || "worker-node",
+  workerName: process.env.NODE_NAME || process.env.WORKER_NAME || "worker-node",
+  nodeLane: process.env.NODE_LANE || "",
+  maxAllocPercent: parseNumber(process.env.MAX_ALLOC_PERCENT, 70),
+  allowDocker: parseBoolean(process.env.ALLOW_DOCKER, true),
   workerTags: parseList(process.env.WORKER_TAGS),
   heartbeatIntervalMs: parseNumber(process.env.HEARTBEAT_INTERVAL_MS, 5000),
   pollIntervalMs: parseNumber(process.env.POLL_INTERVAL_MS, 4000),
   requestTimeoutMs: parseNumber(process.env.REQUEST_TIMEOUT_MS, 10000),
+  gpuRequestTimeoutMs: parseNumber(process.env.GPU_REQUEST_TIMEOUT_MS, 20000),
+  gpuRequestRetries: Math.max(0, parseNumber(process.env.GPU_REQUEST_RETRIES, 1)),
+  maxGpuCodeLength: Math.max(1, parseNumber(process.env.MAX_GPU_CODE_LENGTH, 20000)),
   executorMode: (process.env.EXECUTOR_MODE || "auto").toLowerCase(),
   mockJobDurationMs: parseNumber(process.env.MOCK_JOB_DURATION_MS, 6000),
   mockLogIntervalMs: parseNumber(process.env.MOCK_LOG_INTERVAL_MS, 1000)

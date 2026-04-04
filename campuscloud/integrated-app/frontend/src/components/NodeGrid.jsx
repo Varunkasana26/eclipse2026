@@ -9,11 +9,28 @@ function formatTime(value) {
   return new Date(value).toLocaleString();
 }
 
+<<<<<<< HEAD
 function VramBar({ ram }) {
   const total = ram?.total_gb || 0;
   // Visual representation of RAM capacity
   const percentage = total > 0 ? 100 : 0; 
   
+=======
+function formatFreshness(ageMs) {
+  if (!Number.isFinite(ageMs)) {
+    return 'unknown';
+  }
+
+  if (ageMs < 1000) {
+    return 'just now';
+  }
+
+  const seconds = Math.round(ageMs / 1000);
+  return `${seconds}s ago`;
+}
+
+function NodeGrid({ nodes }) {
+>>>>>>> vkasana-be24/feat/campuscloud-recovery-push
   return (
     <div className="mt-3">
       <div className="flex justify-between text-xs text-slate-400 mb-1.5 font-mono">
@@ -92,6 +109,7 @@ function NodeGrid({ nodes }) {
         ) : filteredNodes.length === 0 ? (
            <div className="col-span-full py-12 text-center text-slate-500 font-mono">No nodes match your active filter.</div>
         ) : (
+<<<<<<< HEAD
           filteredNodes.map((node) => (
             <motion.div 
               key={node.nodeId} 
@@ -110,6 +128,14 @@ function NodeGrid({ nodes }) {
                       {node.name || node.nodeId}
                     </h3>
                   </div>
+=======
+          nodes.map((node) => (
+            <div key={node.node_id || node.nodeId} className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-lg font-semibold">{node.name || node.node_id}</p>
+                  <p className="text-sm text-slate-400 mt-1">{node.hostname}</p>
+>>>>>>> vkasana-be24/feat/campuscloud-recovery-push
                 </div>
                 <span className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded border ${
                   node.status === 'idle'
@@ -121,12 +147,33 @@ function NodeGrid({ nodes }) {
                   {node.status}
                 </span>
               </div>
+<<<<<<< HEAD
               
               <p className="text-[11px] text-slate-500 font-sans ml-5 mb-4">{node.hostname}</p>
               
               <div className="inline-flex items-center gap-1.5 bg-space-card border border-space-accent/20 px-2.5 py-1 rounded mb-1 w-max">
                 <Cpu className="w-3 h-3 text-space-accent" />
                 <span className="text-[11px] text-space-accent font-mono">{node.gpuSummary || 'No GPU Engine'}</span>
+=======
+              <div className="mt-4 space-y-2 text-sm text-slate-300">
+                <p>Online: <span className="text-slate-100">{node.online ? 'yes' : 'no'}</span></p>
+                <p>Availability: <span className="text-slate-100">{node.availability || node.status}</span></p>
+                <p>Workspace: <span className="text-slate-100">{node.workspace_id || 'unassigned'}</span></p>
+                <p>Lane: <span className="text-slate-100 uppercase">{node.lane || node.lane_status || 'unsupported'}</span></p>
+                <p>GPU available: <span className="text-slate-100">{node.gpu_available ? 'yes' : 'no'}</span></p>
+                <p>GPU name: <span className="text-slate-100">{node.gpu_name || 'n/a'}</span></p>
+                <p>VRAM: <span className="text-slate-100">{node.vram_mb ? `${(node.vram_mb / 1024).toFixed(1)} GB` : 'n/a'}</span></p>
+                <p>Docker ready: <span className="text-slate-100">{node.docker_ready ? 'yes' : 'no'}</span></p>
+                <p>Backend usage: <span className="text-slate-100">{node.current_alloc_percent || 0}%</span></p>
+                <p>Utilization: <span className="text-slate-100">{node.utilization_percent || 0}%</span></p>
+                <p>Queue depth: <span className="text-slate-100">{node.current_queue_depth || 0}</span></p>
+                <p>Current job: <span className="text-slate-100">{node.current_job_id || 'none'}</span></p>
+                <p>Heartbeat freshness: <span className="text-slate-100">{formatFreshness(node.heartbeat_age_ms)}</span></p>
+                <p>Last heartbeat: <span className="text-slate-100">{formatTime(node.last_heartbeat || node.lastHeartbeatAt)}</span></p>
+                {node.offline_reason ? (
+                  <p>Offline reason: <span className="text-rose-300">{node.offline_reason}</span></p>
+                ) : null}
+>>>>>>> vkasana-be24/feat/campuscloud-recovery-push
               </div>
 
               <div className="mt-auto pt-4">
@@ -148,3 +195,4 @@ function NodeGrid({ nodes }) {
 }
 
 export default NodeGrid;
+

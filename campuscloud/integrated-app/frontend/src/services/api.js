@@ -1,5 +1,17 @@
 const API_BASE = (process.env.REACT_APP_API_URL || 'http://127.0.0.1:5000').replace(/\/+$/, '');
 
+function parseResponseBody(text) {
+  if (!text) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (parseError) {
+    return text;
+  }
+}
+
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
@@ -13,10 +25,14 @@ async function request(path, options = {}) {
   }
 
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  const data = parseResponseBody(text);
 
   if (!response.ok) {
-    throw new Error(data?.error || `${response.status} ${response.statusText}`);
+    throw new Error(
+      typeof data === 'object' && data !== null
+        ? data.error || data.message || `${response.status} ${response.statusText}`
+        : data || `${response.status} ${response.statusText}`
+    );
   }
 
   return data;
@@ -24,6 +40,14 @@ async function request(path, options = {}) {
 
 async function fetchNodes() {
   return request('/api/nodes');
+}
+
+async function fetchWorkspaces() {
+  return request('/api/workspaces');
+}
+
+async function fetchOnboardingNodes() {
+  return request('/api/onboarding');
 }
 
 async function fetchJobs() {
@@ -41,4 +65,20 @@ async function submitJob(payload) {
   });
 }
 
-export { API_BASE, fetchJob, fetchJobs, fetchNodes, submitJob };
+async function createOnboardingNode(payload) {
+  return request('/api/onboarding/nodes', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export {
+  API_BASE,
+  createOnboardingNode,
+  fetchJob,
+  fetchJobs,
+  fetchNodes,
+  fetchOnboardingNodes,
+  fetchWorkspaces,
+  submitJob,
+};
