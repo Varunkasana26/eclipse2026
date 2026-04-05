@@ -34,6 +34,8 @@ function createRuntime(port) {
   const app = express();
   const orchestrator = createOrchestratorService({
     heartbeatTimeoutMs: env.HEARTBEAT_TIMEOUT_MS,
+    interruptedJobMaxRetries: env.JOB_INTERRUPT_MAX_RETRIES,
+    shortJobRetryThresholdMs: env.SHORT_JOB_RETRY_THRESHOLD_MS,
     maxLogsPerJob: env.MAX_LOGS_PER_JOB,
     backendPublicUrl: getBackendPublicUrl(port),
     workerSecret: env.WORKER_SECRET,

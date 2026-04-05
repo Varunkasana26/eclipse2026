@@ -24,7 +24,7 @@ function normalizeCommand(command) {
   return command.map((part) => String(part)).filter(Boolean);
 }
 
-function buildFailureResult(job, startedAt, error, infrastructureFailure = true) {
+function buildFailureResult(job, startedAt, error, infrastructureFailure = true, failureReason = "execution_error") {
   return {
     status: "failed",
     logs: [],
@@ -38,6 +38,7 @@ function buildFailureResult(job, startedAt, error, infrastructureFailure = true)
       runner: "remote-render",
       gpu_server_url: config.gpuServerUrl,
       infrastructure_failure: infrastructureFailure,
+      failure_reason: failureReason,
     },
   };
 }
@@ -65,21 +66,23 @@ function buildRequestPayload(job) {
 async function runRenderJob(job, hooks = {}) {
   const startedAt = Date.now();
   const endpoint = `${config.gpuServerUrl}/execute`;
-  const payload = buildRequestPayload(job);
   const controller = new AbortController();
   const timeoutMs = Number(job.timeout_ms) || config.requestTimeoutMs;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  logger.info("Sending render execution request", {
-    job_id: job.job_id,
-    endpoint,
-    timeout_ms: timeoutMs,
-    command: payload.command,
-    image: payload.image,
-    input_artifact_count: payload.input_artifacts.length,
-  });
+  let payload;
 
   try {
+    payload = buildRequestPayload(job);
+
+    logger.info("Sending render execution request", {
+      job_id: job.job_id,
+      endpoint,
+      timeout_ms: timeoutMs,
+      command: payload.command,
+      image: payload.image,
+      input_artifact_count: payload.input_artifacts.length,
+    });
+
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
@@ -133,6 +136,7 @@ async function runRenderJob(job, hooks = {}) {
       runner: "remote-render",
       gpu_server_url: config.gpuServerUrl,
       infrastructure_failure: false,
+      failure_reason: errorText ? "execution_error" : null,
     };
 
     if (errorText) {
@@ -151,11 +155,25 @@ async function runRenderJob(job, hooks = {}) {
       result,
     };
   } catch (error) {
+    const failureReason =
+      error.name === "AbortError"
+        ? "timeout"
+        : payload
+          ? "offline"
+          : "validation_error";
     const message =
       error.name === "AbortError"
-        ? `Render server request timed out after ${timeoutMs}ms`
-        : error.message;
-    const failure = buildFailureResult(job, startedAt, new Error(message));
+        ? `timeout: Render server request timed out after ${timeoutMs}ms`
+        : payload
+          ? `offline: ${error.message}`
+          : `validation_error: ${error.message}`;
+    const failure = buildFailureResult(
+      job,
+      startedAt,
+      new Error(message),
+      Boolean(payload),
+      failureReason
+    );
 
     logger.warn("Render execution request failed", {
       job_id: job.job_id,

@@ -169,7 +169,8 @@ class WorkerAgent {
         logger.info("Job completed", { worker_id: this.workerId, job_id: job.job_id });
       } else {
         await updateJobStatus(job.job_id, JOB_STATUS.FAILED, {
-          executor_mode: config.executorMode
+          executor_mode: config.executorMode,
+          error: result.result?.error || 'Job failed'
         });
         await sendJobResult(job.job_id, result.result || {});
         logger.warn("Job failed", {

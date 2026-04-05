@@ -21,11 +21,12 @@ const JOB_STATUS = {
   QUEUED: "queued",
   ASSIGNED: "assigned",
   RUNNING: "running",
+  INTERRUPTED: "interrupted",
   COMPLETED: "completed",
   FAILED: "failed",
 };
 
-const JOB_TERMINAL_STATUSES = new Set([JOB_STATUS.COMPLETED, JOB_STATUS.FAILED]);
+const JOB_TERMINAL_STATUSES = new Set([JOB_STATUS.INTERRUPTED, JOB_STATUS.COMPLETED, JOB_STATUS.FAILED]);
 
 const EXECUTION_MODE = {
   AUTO: "auto",
@@ -112,6 +113,18 @@ function normalizeLane(value, fallback = null) {
 function normalizeJobType(value, fallback = JOB_TYPE.DEFAULT) {
   const normalized = String(value || "").trim().toLowerCase();
   return Object.values(JOB_TYPE).includes(normalized) ? normalized : fallback;
+}
+
+function normalizeJobMetadata(metadata = {}) {
+  const nextMetadata = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? clone(metadata) : {};
+  const normalizedJobType = normalizeJobType(nextMetadata.job_type ?? nextMetadata.jobType, "");
+
+  if (normalizedJobType) {
+    nextMetadata.job_type = normalizedJobType;
+  }
+
+  delete nextMetadata.jobType;
+  return nextMetadata;
 }
 
 function tokenizeCommand(command) {
@@ -238,10 +251,7 @@ function buildJobStatusPayload({ workerId, status, extra = {} }) {
 }
 
 function buildAgentJobPayload(job) {
-  const metadata = clone(job.metadata || {});
-  if (metadata.job_type) {
-    metadata.job_type = normalizeJobType(metadata.job_type);
-  }
+  const metadata = normalizeJobMetadata(job.metadata || {});
 
   return {
     job_id: job.id,
@@ -256,6 +266,11 @@ function buildAgentJobPayload(job) {
     env: clone(job.env || {}),
     execution_mode: normalizeExecutionMode(job.execution_mode || job.executionMode, EXECUTION_MODE.LOCAL),
     timeout_ms: Number(job.metadata?.timeout_ms) || 300000,
+    retry_count: Math.max(0, Number(job.retry_count) || 0),
+    max_retries: Math.max(0, Number(job.max_retries) || 0),
+    progress: job.progress ?? null,
+    last_checkpoint: clone(job.last_checkpoint ?? null),
+    interrupted_at: job.interrupted_at || null,
     resource_requirements: normalizeResourceRequirements(job.resourceRequirements || {}, {
       gpu_required: job.requires_gpu,
       min_gpu_memory_mb: job.vram_mb,
@@ -281,6 +296,7 @@ module.exports = {
   normalizeExecutionMode,
   normalizeLane,
   normalizeJobType,
+  normalizeJobMetadata,
   normalizeCommand,
   stringifyCommand,
   normalizeResourceRequirements,

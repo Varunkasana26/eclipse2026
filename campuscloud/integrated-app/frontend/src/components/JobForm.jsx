@@ -1,5 +1,8 @@
-﻿import React from 'react';
+import React from 'react';
 import { Play, TerminalSquare } from 'lucide-react';
+import TokenEstimatorCard from './TokenEstimatorCard';
+import { TOKEN_ECONOMY } from '../config/tokenEconomy';
+import CustomDropdown from './CustomDropdown';
 
 const defaultCommand =
   'node -e "console.log(\'CampusCloud demo job started\'); setTimeout(() => console.log(\'CampusCloud demo job finished\'), 750)"';
@@ -24,6 +27,7 @@ const jobPresets = {
     renderFrameEnd: '10',
     renderOutputFormat: 'png',
     renderFiles: [],
+    demoDurationMinutes: 30,
   },
   docker: {
     jobType: 'python',
@@ -38,6 +42,7 @@ const jobPresets = {
     renderFrameEnd: '10',
     renderOutputFormat: 'png',
     renderFiles: [],
+    demoDurationMinutes: 30,
   },
   gpu: {
     jobType: 'python',
@@ -47,6 +52,7 @@ const jobPresets = {
     requiresGpu: true,
     gpuProfile: 'mid',
     envText: '{}',
+    demoDurationMinutes: 30,
   },
   render: {
     jobType: 'render',
@@ -61,6 +67,7 @@ const jobPresets = {
     renderFrameEnd: '10',
     renderOutputFormat: 'png',
     renderFiles: [],
+    demoDurationMinutes: 60,
   },
 };
 
@@ -79,66 +86,89 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError, workspace
     }));
   }
 
+  const workspaceOptions = workspaces.length === 0 
+    ? [{ label: 'No workspace available', value: '' }] 
+    : workspaces.map(w => ({ label: `${w.id} (${w.status})`, value: w.id }));
+    
+  const demoDurationOptions = TOKEN_ECONOMY.supportedDurations.map(m => ({ label: `${m} minutes`, value: m }));
+  
+  const jobTypeOptions = [
+    { label: 'Python / Command', value: 'python' },
+    { label: 'Render', value: 'render' }
+  ];
+
+  const executionModeOptions = [
+    { label: 'Local Fallback', value: 'local' },
+    { label: 'Docker', value: 'docker' }
+  ];
+
+  const gpuProfileOptions = [
+    { label: 'Any GPU', value: 'any' },
+    { label: 'Mid memory GPU (10GB+)', value: 'mid' },
+    { label: 'High memory GPU (20GB+)', value: 'high' }
+  ];
+
+  const renderEngineOptions = [
+    { label: 'Blender', value: 'blender' },
+    { label: 'ffmpeg', value: 'ffmpeg' }
+  ];
+
+  const btnClass = "rounded-2xl bg-white/5 border border-white/10 backdrop-blur-md px-4 py-2 text-sm text-slate-100 transition-all duration-300 hover:scale-105 hover:shadow-[0_0_20px_rgba(0,255,255,0.2)] hover:border-cyan-400/40 active:bg-gradient-to-r active:from-cyan-500/20 active:to-blue-500/20 active:scale-95";
+  const inputClass = "w-full rounded-2xl bg-white/5 border border-white/10 px-4 py-3 text-slate-100 outline-none backdrop-blur-md transition-all duration-300 focus:border-cyan-400 focus:shadow-[0_0_20px_rgba(0,255,255,0.2)] hover:border-cyan-400/40";
+
   return (
-    <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6">
+    <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-6 shadow-[0_8px_40px_rgba(0,255,255,0.06)] transition-all duration-300 hover:shadow-[0_10px_50px_rgba(0,255,255,0.12)] hover:-translate-y-[5px] hover:border-cyan-400/30">
       <div className="flex items-center gap-3 mb-5">
         <Play className="w-5 h-5 text-cyan-300" />
-        <h2 className="text-xl font-semibold">Submit Workspace Job</h2>
+        <h2 className="text-xl font-semibold text-white">Submit Workspace Job</h2>
       </div>
       <div className="flex flex-wrap gap-3 mb-5">
-        <button type="button" onClick={() => applyPreset('local')} className="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-2 text-sm text-slate-100">
+        <button type="button" onClick={() => applyPreset('local')} className={btnClass}>
           Load Local
         </button>
-        <button type="button" onClick={() => applyPreset('docker')} className="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-2 text-sm text-slate-100">
+        <button type="button" onClick={() => applyPreset('docker')} className={btnClass}>
           Load Docker
         </button>
-        <button type="button" onClick={() => applyPreset('gpu')} className="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-2 text-sm text-slate-100">
+        <button type="button" onClick={() => applyPreset('gpu')} className={btnClass}>
           Load GPU
         </button>
-        <button type="button" onClick={() => applyPreset('render')} className="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-2 text-sm text-slate-100">
+        <button type="button" onClick={() => applyPreset('render')} className={btnClass}>
           Load Render
         </button>
       </div>
       <form className="space-y-4" onSubmit={onSubmit}>
         <div className="grid sm:grid-cols-2 gap-4">
-          <label className="block">
+          <label className="block z-50 relative">
             <span className="block text-sm text-slate-300 mb-2">Job Type</span>
-            <select
+            <CustomDropdown
               value={form.jobType}
-              onChange={(event) => setForm((current) => ({ ...current, jobType: event.target.value }))}
-              className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
-            >
-              <option value="python">Python / Command</option>
-              <option value="render">Render</option>
-            </select>
+              onChange={(e) => setForm((current) => ({ ...current, jobType: e.target.value }))}
+              options={jobTypeOptions}
+            />
           </label>
-          <label className="block">
+          <label className="block z-50 relative">
             <span className="block text-sm text-slate-300 mb-2">Workspace ID</span>
-            <select
-              value={form.workspaceId}
-              onChange={(event) => setForm((current) => ({ ...current, workspaceId: event.target.value }))}
-              className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
-            >
-              {workspaces.length === 0 ? (
-                <option value="">No workspace available</option>
-              ) : null}
-              {workspaces.map((workspace) => (
-                <option key={workspace.id} value={workspace.id}>
-                  {workspace.id} ({workspace.status})
-                </option>
-              ))}
-            </select>
+            <CustomDropdown
+              value={form.workspaceId || ''}
+              onChange={(e) => setForm((current) => ({ ...current, workspaceId: e.target.value }))}
+              options={workspaceOptions}
+            />
           </label>
-          <label className="block">
+          <label className="block z-40 relative">
             <span className="block text-sm text-slate-300 mb-2">Execution Mode</span>
-            <select
+            <CustomDropdown
               value={form.executionMode}
-              onChange={(event) => setForm((current) => ({ ...current, executionMode: event.target.value }))}
-              className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
-            >
-              <option value="local">Local Fallback</option>
-              <option value="docker">Docker</option>
-            </select>
+              onChange={(e) => setForm((current) => ({ ...current, executionMode: e.target.value }))}
+              options={executionModeOptions}
+            />
+          </label>
+          <label className="block z-40 relative">
+            <span className="block text-sm text-slate-300 mb-2">Demo usage estimate</span>
+            <CustomDropdown
+              value={form.demoDurationMinutes || TOKEN_ECONOMY.billingIncrementMinutes}
+              onChange={(e) => setForm((current) => ({ ...current, demoDurationMinutes: Number(e.target.value) }))}
+              options={demoDurationOptions}
+            />
           </label>
         </div>
 
@@ -147,7 +177,7 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError, workspace
           <input
             value={form.image}
             onChange={(event) => setForm((current) => ({ ...current, image: event.target.value }))}
-            className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
+            className={inputClass}
             placeholder="node:20-alpine"
           />
         </div>
@@ -158,13 +188,13 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError, workspace
             value={form.commandText}
             onChange={(event) => setForm((current) => ({ ...current, commandText: event.target.value }))}
             rows={4}
-            className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-sm text-slate-100 outline-none focus:border-cyan-400"
+            className={inputClass}
             placeholder={isRenderJob ? defaultRenderCommand : defaultCommand}
           />
         </div>
 
         <div className="grid lg:grid-cols-4 sm:grid-cols-2 gap-4">
-          <label className="flex items-center gap-3 rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3">
+          <label className={`flex items-center gap-3 rounded-2xl bg-white/5 border border-white/10 px-4 py-3 cursor-pointer transition-all duration-300 hover:border-cyan-400/40 hover:shadow-[0_0_20px_rgba(0,255,255,0.2)] ${form.requiresGpu ? 'border-cyan-400/50 shadow-[0_0_20px_rgba(0,255,255,0.1)]' : ''}`}>
             <input
               type="checkbox"
               checked={form.requiresGpu}
@@ -175,38 +205,31 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError, workspace
                   gpuProfile: event.target.checked ? current.gpuProfile : 'any',
                 }))
               }
-              className="w-4 h-4 rounded border-slate-600 bg-slate-900"
+              className="w-4 h-4 rounded border-white/20 bg-black/20 accent-cyan-400 focus:ring-cyan-400/50"
             />
             <span className="text-sm text-slate-300">Requires GPU</span>
           </label>
-          <label className="block lg:col-span-3">
+          <label className="block lg:col-span-3 z-30 relative">
             <span className="block text-sm text-slate-300 mb-2">Minimum GPU profile</span>
-            <select
+            <CustomDropdown
               value={form.gpuProfile}
-              onChange={(event) => setForm((current) => ({ ...current, gpuProfile: event.target.value }))}
+              onChange={(e) => setForm((current) => ({ ...current, gpuProfile: e.target.value }))}
+              options={gpuProfileOptions}
               disabled={!form.requiresGpu}
-              className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
-            >
-              <option value="any">Any GPU</option>
-              <option value="mid">Mid memory GPU (10GB+)</option>
-              <option value="high">High memory GPU (20GB+)</option>
-            </select>
+            />
           </label>
         </div>
 
         {isRenderJob ? (
           <>
             <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <label className="block">
+              <label className="block z-20 relative">
                 <span className="block text-sm text-slate-300 mb-2">Render Engine</span>
-                <select
+                <CustomDropdown
                   value={form.renderEngine}
-                  onChange={(event) => setForm((current) => ({ ...current, renderEngine: event.target.value }))}
-                  className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
-                >
-                  <option value="blender">Blender</option>
-                  <option value="ffmpeg">ffmpeg</option>
-                </select>
+                  onChange={(e) => setForm((current) => ({ ...current, renderEngine: e.target.value }))}
+                  options={renderEngineOptions}
+                />
               </label>
               <label className="block">
                 <span className="block text-sm text-slate-300 mb-2">Frame Start</span>
@@ -215,7 +238,7 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError, workspace
                   min="1"
                   value={form.renderFrameStart}
                   onChange={(event) => setForm((current) => ({ ...current, renderFrameStart: event.target.value }))}
-                  className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
+                  className={inputClass}
                 />
               </label>
               <label className="block">
@@ -225,7 +248,7 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError, workspace
                   min="1"
                   value={form.renderFrameEnd}
                   onChange={(event) => setForm((current) => ({ ...current, renderFrameEnd: event.target.value }))}
-                  className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
+                  className={inputClass}
                 />
               </label>
               <label className="block">
@@ -233,7 +256,7 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError, workspace
                 <input
                   value={form.renderOutputFormat}
                   onChange={(event) => setForm((current) => ({ ...current, renderOutputFormat: event.target.value }))}
-                  className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-slate-100 outline-none focus:border-cyan-400"
+                  className={inputClass}
                   placeholder="png"
                 />
               </label>
@@ -250,13 +273,13 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError, workspace
                     renderFiles: Array.from(event.target.files || []),
                   }))
                 }
-                className="block w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-sm text-slate-100"
+                className={inputClass}
               />
               <p className="text-xs text-slate-400 mt-2">
                 Selected files stay local until submit. They are uploaded only for render jobs after the job record is created.
               </p>
               {Array.isArray(form.renderFiles) && form.renderFiles.length > 0 ? (
-                <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-950 p-4 text-xs text-slate-300">
+                <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-4 text-xs text-slate-300 backdrop-blur-sm">
                   {form.renderFiles.map((file) => (
                     <p key={`${file.name}-${file.size}`}>{file.name} ({file.size} bytes)</p>
                   ))}
@@ -272,7 +295,7 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError, workspace
             value={form.envText}
             onChange={(event) => setForm((current) => ({ ...current, envText: event.target.value }))}
             rows={4}
-            className="w-full rounded-2xl bg-slate-950 border border-slate-700 px-4 py-3 text-sm text-slate-100 outline-none focus:border-cyan-400"
+            className={inputClass}
             placeholder='{"DEMO": "true"}'
           />
         </div>
@@ -287,13 +310,32 @@ function JobForm({ form, setForm, onSubmit, isSubmitting, submitError, workspace
             ? 'Render jobs are queued after asset upload completes. Python jobs still follow the existing backend assignment flow.'
             : 'The backend assigns the job to the best node in the selected workspace and keeps queueing and capacity limits internal.'}
         </p>
+        <TokenEstimatorCard
+          compact
+          showSelector={false}
+          selectedMinutes={form.demoDurationMinutes || TOKEN_ECONOMY.billingIncrementMinutes}
+          title="Demo job cost preview"
+          description="This estimate is only for explaining the token economy during the demo. It does not trigger billing, checkout, or payment collection."
+        />
         <button
           type="submit"
           disabled={isSubmitting || !form.workspaceId}
-          className="inline-flex items-center gap-2 rounded-2xl bg-cyan-400 text-slate-950 font-semibold px-5 py-3 disabled:opacity-60"
+          className="w-full inline-flex justify-center items-center gap-2 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-md text-white font-semibold px-5 py-4 transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_20px_rgba(0,255,255,0.2)] hover:border-cyan-400/40 active:bg-gradient-to-r active:from-cyan-500/20 active:to-blue-500/20 active:scale-95 disabled:opacity-50 disabled:hover:scale-100 disabled:hover:shadow-none group relative overflow-hidden"
         >
-          <TerminalSquare className="w-4 h-4" />
-          {isSubmitting ? 'Submitting...' : 'Submit Job'}
+          {isSubmitting ? (
+            <>
+              <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span>Submitting...</span>
+            </>
+          ) : (
+            <>
+              <TerminalSquare className="w-5 h-5 text-cyan-300 group-hover:text-cyan-400 drop-shadow-[0_0_8px_rgba(0,255,255,0.6)]" />
+              <span>Submit Job</span>
+            </>
+          )}
         </button>
       </form>
     </div>

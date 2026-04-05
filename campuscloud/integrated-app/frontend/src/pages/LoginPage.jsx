@@ -166,12 +166,11 @@ const CSS = `
   opacity:0;transition:opacity .8s;}
 
 #login-card{position:relative;z-index:51;width:360px;
-  background:rgba(6,10,20,.92);border:1px solid rgba(0,85,255,.18);
-  border-radius:18px;padding:40px 36px;
+  background:rgba(255,255,255,0.04);backdrop-filter:blur(25px);border:1px solid rgba(255,255,255,0.1);
+  border-radius:24px;padding:40px 36px;
   transform:translateY(60px) scale(.9);opacity:0;
   transition:transform .9s cubic-bezier(.22,1,.36,1),opacity .7s;
-  box-shadow:0 0 0 1px rgba(0,85,255,.06),0 30px 80px rgba(0,0,0,.7),
-    0 0 60px rgba(0,85,255,.06),inset 0 0 40px rgba(0,85,255,.02);}
+  box-shadow:0 8px 40px rgba(0,255,255,0.08),0 30px 80px rgba(0,0,0,.7),inset 0 0 40px rgba(0,255,255,.05);}
 #login-card.show{transform:translateY(0) scale(1);opacity:1;}
 
 #login-card::before{content:'';position:absolute;top:-1px;left:-1px;

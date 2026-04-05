@@ -4,10 +4,14 @@ import { AuthProvider } from "./contexts/AuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
+import GlobalEffects from "./components/GlobalEffects";
+import CursorGlow from "./components/CursorGlow";
 
 function App() {
   return (
     <BrowserRouter>
+      <CursorGlow />
+      <GlobalEffects />
       <AuthProvider>
         <Routes>
           {/* Root shows the GPU intro animation → login (all in one page) */}

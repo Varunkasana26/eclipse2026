@@ -1,8 +1,10 @@
-﻿import React from 'react';
+import React from 'react';
+
+import { getReadableStatus, getStatusBadgeClass } from '../utils/statusPresentation';
 
 function JobList({ jobs, selectedJobId, onSelect }) {
   return (
-    <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6">
+    <div className="bg-white/5 backdrop-blur-xl shadow-[0_8px_40px_rgba(0,255,255,0.06)] border border-white/10 rounded-3xl p-6">
       <h2 className="text-xl font-semibold mb-5">Jobs</h2>
       <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
         {jobs.length === 0 ? (
@@ -16,7 +18,7 @@ function JobList({ jobs, selectedJobId, onSelect }) {
               type="button"
               onClick={() => onSelect(job.id)}
               className={`w-full text-left rounded-2xl border p-4 ${
-                selectedJobId === job.id ? 'border-cyan-400 bg-cyan-500/8' : 'border-slate-800 bg-slate-950'
+                selectedJobId === job.id ? 'border-cyan-400 bg-cyan-500/8' : 'border-white/10 bg-white/5 backdrop-blur-md'
               }`}
             >
               <div className="flex items-start justify-between gap-4">
@@ -37,8 +39,8 @@ function JobList({ jobs, selectedJobId, onSelect }) {
                     </p>
                   ) : null}
                 </div>
-                <span className="text-xs uppercase tracking-wide text-slate-200 bg-slate-800 rounded-full px-3 py-1">
-                  {job.status}
+                <span className={`text-xs tracking-wide rounded-full px-3 py-1 font-semibold ${getStatusBadgeClass(job.status)}`}>
+                  {getReadableStatus(job.status)}
                 </span>
               </div>
               {job.is_parent && job.chunk_progress ? (
@@ -58,4 +60,3 @@ function JobList({ jobs, selectedJobId, onSelect }) {
 }
 
 export default JobList;
-

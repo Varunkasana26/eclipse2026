@@ -19,7 +19,7 @@ function safeExecutable(command) {
 }
 
 function isRenderJob(job) {
-  return String(job?.metadata?.job_type || "").toLowerCase() === "render";
+  return String(job?.metadata?.job_type || job?.metadata?.jobType || "").toLowerCase() === "render";
 }
 
 function getRequestedExecutable(job) {
@@ -36,6 +36,7 @@ async function failUnsupportedCommand(job, hooks = {}, startedAt = Date.now()) {
     output_files: [],
     duration_ms: Date.now() - startedAt,
     error,
+    failure_reason: "validation_error",
   };
 
   await hooks.onFail?.(result);
@@ -87,6 +88,8 @@ async function runLocalJob(job, hooks = {}) {
   return new Promise((resolve) => {
     const startedAt = Date.now();
     const executable = safeExecutable(job.command);
+    let timedOut = false;
+    let forceKillTimer = null;
     if (!executable) {
       failUnsupportedCommand(job, hooks, startedAt).then(resolve);
       return;
@@ -103,11 +106,20 @@ async function runLocalJob(job, hooks = {}) {
 
     const timeoutMs = Number(job.timeout_ms) || 300000;
     const timeout = setTimeout(() => {
+      timedOut = true;
       try {
         proc.kill("SIGTERM");
       } catch {
         return;
       }
+
+      forceKillTimer = setTimeout(() => {
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          return;
+        }
+      }, 5000);
     }, timeoutMs);
 
     const forwardLogs = async (chunk, stream) => {
@@ -134,6 +146,9 @@ async function runLocalJob(job, hooks = {}) {
 
     proc.on("error", async (error) => {
       clearTimeout(timeout);
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer);
+      }
       await hooks.onFail?.();
       resolve({
         status: "failed",
@@ -143,18 +158,27 @@ async function runLocalJob(job, hooks = {}) {
           output_files: [],
           duration_ms: Date.now() - startedAt,
           error: error.message,
+          failure_reason: "execution_error",
         },
       });
     });
 
     proc.on("close", async (exitCode, signal) => {
       clearTimeout(timeout);
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer);
+      }
       const result = {
         exit_code: typeof exitCode === "number" ? exitCode : -1,
         output_files: [],
         duration_ms: Date.now() - startedAt,
         signal: signal || null,
-        error: exitCode === 0 ? null : `Local job exited with code ${exitCode}`,
+        error: timedOut
+          ? `timeout: Local job exceeded ${timeoutMs}ms and was terminated`
+          : exitCode === 0
+            ? null
+            : `Local job exited with code ${exitCode}`,
+        failure_reason: timedOut ? "timeout" : exitCode === 0 ? null : "execution_error",
       };
 
       if (exitCode === 0) {

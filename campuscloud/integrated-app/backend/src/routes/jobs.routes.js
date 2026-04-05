@@ -47,27 +47,61 @@ function hasInlinePythonCode(body) {
   return candidates.some((item) => typeof item === "string" && item.trim());
 }
 
+function validationError(message) {
+  return new Error(`validation_error: ${message}`);
+}
+
+function hasCommandInput(body) {
+  if (Array.isArray(body?.command)) {
+    return body.command.some((item) => String(item || "").trim());
+  }
+
+  return typeof body?.command === "string" && body.command.trim().length > 0;
+}
+
 function validateJobRequest(body = {}) {
+  const workspaceId = String(body.workspace_id || body.workspaceId || "").trim();
   const executionMode = String(body.execution_mode || body.executionMode || "local").trim().toLowerCase();
-  const hasCommand = Array.isArray(body.command) && body.command.length > 0;
+  const hasCommand = hasCommandInput(body);
   const requiresGpu = Boolean(body.resource_requirements?.gpu_required || body.requires_gpu);
+  const hasInlineCode = hasInlinePythonCode(body);
+
+  if (!workspaceId) {
+    throw validationError("workspace_id is required");
+  }
+
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw validationError("request body must be a JSON object");
+  }
+
+  if (!String(body.image || "").trim()) {
+    throw validationError("image is required");
+  }
+
+  if (body.env !== undefined && (typeof body.env !== "object" || body.env === null || Array.isArray(body.env))) {
+    throw validationError("env must be a JSON object");
+  }
+
+  if (!hasCommand && !hasInlineCode) {
+    throw validationError("command or inline code is required");
+  }
 
   if (executionMode === "docker") {
     if (!String(body.image || "").trim()) {
-      throw new Error("Docker jobs require an image");
+      throw validationError("Docker jobs require an image");
     }
 
-    if (!hasCommand && !hasInlinePythonCode(body)) {
-      throw new Error("Docker jobs require a command array or inline Python code");
+    if (!hasCommand && !hasInlineCode) {
+      throw validationError("Docker jobs require a command array or inline Python code");
     }
   }
 
-  if ((executionMode === "gpu" || executionMode === "remote-gpu") && !hasInlinePythonCode(body)) {
-    throw new Error("Remote GPU jobs require inline Python code");
+  if ((executionMode === "gpu" || executionMode === "remote-gpu") && !hasInlineCode) {
+    throw validationError("Remote GPU jobs require inline Python code");
   }
 
   if (requiresGpu && executionMode === "docker" && !String(body.image || "").trim()) {
-    throw new Error("GPU Docker jobs require an NVIDIA-compatible image");
+    throw validationError("GPU Docker jobs require an NVIDIA-compatible image");
   }
 }
 

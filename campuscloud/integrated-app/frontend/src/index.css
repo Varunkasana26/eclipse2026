@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400..700;1,400..700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -13,7 +13,7 @@ body {
   background-color: #050505;
   color: var(--text-main);
   /* Fallback if Space Grotesk is still loading */
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: "Lora", serif;
 }
 
 .gpu-animated-bg {
@@ -59,3 +59,66 @@ body {
   opacity: 0.025;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
 }
+
+/* Button ripples */
+button {
+  position: relative;
+  overflow: hidden;
+}
+button .ripple {
+  position: absolute;
+  border-radius: 50%;
+  transform: scale(0);
+  animation: ripple-animation 600ms linear forwards;
+  background-color: rgba(0, 255, 255, 0.4);
+  pointer-events: none;
+}
+@keyframes ripple-animation {
+  to {
+    transform: scale(4);
+    opacity: 0;
+  }
+}
+
+/* Scroll reveal */
+.reveal-hidden {
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+}
+.reveal-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Input placeholder animation */
+input::placeholder, textarea::placeholder {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+input:focus::placeholder, textarea:focus::placeholder {
+  opacity: 0.5;
+  transform: translateX(5px);
+}
+
+/* Base button and card interaction overrides */
+section, .hover-tilt {
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0.2, 1), box-shadow 0.2s ease, border-color 0.2s ease;
+  will-change: transform, box-shadow;
+}
+
+/* Shimmer loading */
+.animate-shimmer {
+  background: linear-gradient(90deg, rgba(255,255,255,0.02) 25%, rgba(255,255,255,0.05) 50%, rgba(255,255,255,0.02) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite linear;
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Progress bar smooth */
+.progress-bar-smooth {
+  transition: width 1s ease-out;
+}
+
