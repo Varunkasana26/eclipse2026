@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Activity, Box, Cpu, LogOut, Radio, Server, Waypoints } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -16,6 +16,7 @@ import { connectToEventStream } from '../services/socket';
 import JobsPage from './JobsPage';
 import NodesPage from './NodesPage';
 import SettingsPage from './SettingsPage';
+import TokenomicsPage from './TokenomicsPage';
 import WorkspacePage from './WorkspacePage';
 import { defaultCommand } from '../components/JobForm';
 
@@ -66,6 +67,7 @@ function DashboardPage() {
     renderFrameEnd: '10',
     renderOutputFormat: 'png',
     renderFiles: [],
+    demoDurationMinutes: 30,
   });
   const [onboardingForm, setOnboardingForm] = useState({
     workerName: 'Windows GPU Node',
@@ -78,6 +80,26 @@ function DashboardPage() {
     logout();
     navigate('/login');
   };
+
+  async function refreshClusterState({ silent = false } = {}) {
+    try {
+      const [workspacesResponse, nodesResponse, jobsResponse, onboardingResponse] = await Promise.all([
+        fetchWorkspaces(),
+        fetchNodes(),
+        fetchJobs(),
+        fetchOnboardingNodes(),
+      ]);
+
+      setWorkspaces(workspacesResponse?.items || []);
+      setNodes(nodesResponse?.items || []);
+      setJobs(jobsResponse?.items || []);
+      setOnboardingItems(onboardingResponse?.items || []);
+    } catch (error) {
+      if (!silent) {
+        setSubmitError(error.message);
+      }
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -105,6 +127,14 @@ function DashboardPage() {
   }, []);
 
   useEffect(() => {
+    const interval = setInterval(() => {
+      refreshClusterState({ silent: true }).catch(() => {});
+    }, connectionState === 'live' ? 30000 : 10000);
+
+    return () => clearInterval(interval);
+  }, [connectionState]);
+
+  useEffect(() => {
     if (form.workspaceId || workspaces.length === 0) {
       return;
     }
@@ -118,8 +148,14 @@ function DashboardPage() {
   useEffect(() => {
     return connectToEventStream({
       onOpen: () => setConnectionState('live'),
-      onClose: () => setConnectionState('disconnected'),
-      onError: () => setConnectionState('error'),
+      onClose: () => {
+        setConnectionState('disconnected');
+        refreshClusterState({ silent: true }).catch(() => {});
+      },
+      onError: () => {
+        setConnectionState('error');
+        refreshClusterState({ silent: true }).catch(() => {});
+      },
       onMessage: (message) => {
         const { event, payload } = message;
 
@@ -324,33 +360,53 @@ function DashboardPage() {
   }
 
   return (
-    <div className="gpu-animated-bg min-h-screen text-slate-100 relative isolate overflow-hidden">
+    <div className="gpu-animated-bg min-h-screen text-slate-100 relative isolate overflow-hidden bg-[#040a18]">
+      <style>{`
+        @keyframes swayRotate {
+          0% { transform: translate(-50%, -50%) rotate(-4deg) scale(1.05); opacity: 0.3;}
+          50% { transform: translate(-50%, -50%) rotate(4deg) scale(1.1); opacity: 0.5;}
+          100% { transform: translate(-50%, -50%) rotate(-4deg) scale(1.05); opacity: 0.3;}
+        }
+      `}</style>
+      
+      {/* Massive Rotating GPU Background from Photo */}
+      <div 
+        className="fixed top-1/2 left-1/2 w-[100vw] h-[100vh] z-[-1] pointer-events-none"
+        style={{
+          backgroundImage: 'url("/XcxUx88sVYZ4Z2H2qhf7jT-1481-80.jpg")',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          animation: 'swayRotate 30s ease-in-out infinite',
+        }}
+      />
+      
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6 relative z-10">
-        <section className="bg-slate-950/80 border border-slate-800 rounded-3xl p-6">
-          <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
+        <section className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-6 shadow-[0_8px_40px_rgba(0,255,255,0.06)] hover-tilt transition-all duration-500 hover:shadow-[0_15px_50px_rgba(0,255,255,0.12)] relative overflow-hidden">
+          <div className="absolute -top-10 -right-10 w-48 h-48 bg-white/5 rounded-full blur-[40px] pointer-events-none transition-colors duration-500" />
+          <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6 relative z-10">
             <div>
-              <p className="text-cyan-300 text-sm font-semibold tracking-[0.2em] uppercase">CampusCloud MVP</p>
-              <h1 className="text-3xl font-bold mt-2">Workspace Compute Console</h1>
-              <p className="text-slate-400 mt-3 max-w-2xl">
+              <p className="text-cyan-400 text-sm font-bold tracking-[0.2em] uppercase drop-[0_0_8px_rgba(0,255,255,0.8)]">CampusCloud MVP</p>
+              <h1 className="text-3xl font-bold mt-2 text-white drop-shadow-md">Workspace Compute Console</h1>
+              <p className="text-slate-300 mt-3 max-w-2xl leading-relaxed">
                 Providers join by running the agent, the backend assigns each node into a low, mid, or high lane,
                 and users submit jobs to a workspace without touching scheduler internals.
               </p>
             </div>
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-3 bg-slate-900 border border-slate-800 rounded-2xl px-4 py-3">
-                <Radio className="w-4 h-4 text-cyan-300" />
-                <span className="text-sm">
+              <div className="flex items-center gap-3 bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl px-5 py-3 transition-all duration-300 hover:shadow-[0_0_15px_rgba(0,255,255,0.1)] hover:border-cyan-400/30 group">
+                <Radio className={`w-4 h-4 ${connectionState === 'live' ? 'text-emerald-400 group-hover:animate-pulse drop-shadow-[0_0_5px_rgba(16,185,129,0.8)]' : 'text-amber-400'}`} />
+                <span className="text-sm font-medium">
                   WebSocket:
-                  <span className={`ml-2 font-semibold ${connectionState === 'live' ? 'text-emerald-300' : 'text-amber-300'}`}>
+                  <span className={`ml-2 font-bold ${connectionState === 'live' ? 'text-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'text-amber-400'}`}>
                     {connectionState}
                   </span>
                 </span>
               </div>
-              <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-2xl px-4 py-3 text-sm">
-                <span className="text-slate-400">Logged in as: <span className="font-semibold text-cyan-300">{user?.email}</span></span>
+              <div className="flex items-center gap-3 bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl px-5 py-3 text-sm transition-all duration-300 hover:shadow-[0_0_15px_rgba(0,255,255,0.1)] hover:border-cyan-400/30">
+                <span className="text-slate-300 font-medium">Logged in as: <span className="font-bold text-cyan-300 drop-shadow-md">{user?.email}</span></span>
                 <button
                   onClick={handleLogout}
-                  className="ml-2 p-1.5 bg-slate-800 hover:bg-red-600/20 border border-slate-700 hover:border-red-600 rounded-lg transition text-slate-300 hover:text-red-400"
+                  className="ml-2 p-1.5 bg-white/5 hover:bg-rose-500/20 border border-white/10 hover:border-rose-500/50 rounded-lg transition-all duration-300 hover:scale-110 hover:shadow-[0_0_15px_rgba(244,63,94,0.3)] text-slate-300 hover:text-rose-400 active:scale-95"
                   title="Logout"
                 >
                   <LogOut className="w-4 h-4" />
@@ -360,18 +416,19 @@ function DashboardPage() {
           </div>
         </section>
 
-        <section className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <section className="grid grid-cols-2 lg:grid-cols-5 gap-6">
           {[
-            { label: 'Workspaces', value: workspaces.length, icon: Waypoints },
-            { label: 'Complete Pools', value: stats.completeWorkspaces, icon: Box },
-            { label: 'Known Nodes', value: stats.nodes, icon: Server },
-            { label: 'Available Nodes', value: stats.availableNodes, icon: Cpu },
-            { label: 'Active Jobs', value: stats.activeJobs, icon: Activity },
-          ].map((stat) => (
-            <div key={stat.label} className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4">
-              <stat.icon className="w-5 h-5 text-cyan-300" />
-              <p className="text-slate-400 text-sm mt-3">{stat.label}</p>
-              <p className="text-3xl font-bold mt-2">{stat.value}</p>
+            { label: 'Workspaces', value: workspaces.length, icon: Waypoints, color: 'text-cyan-400', shadow: 'hover:shadow-[0_10px_30px_rgba(34,211,238,0.15)]', border: 'hover:border-cyan-400/40' },
+            { label: 'Complete Pools', value: stats.completeWorkspaces, icon: Box, color: 'text-violet-400', shadow: 'hover:shadow-[0_10px_30px_rgba(167,139,250,0.15)]', border: 'hover:border-violet-400/40' },
+            { label: 'Known Nodes', value: stats.nodes, icon: Server, color: 'text-indigo-400', shadow: 'hover:shadow-[0_10px_30px_rgba(129,140,248,0.15)]', border: 'hover:border-indigo-400/40' },
+            { label: 'Available Nodes', value: stats.availableNodes, icon: Cpu, color: 'text-emerald-400', shadow: 'hover:shadow-[0_10px_30px_rgba(52,211,153,0.15)]', border: 'hover:border-emerald-400/40' },
+            { label: 'Active Jobs', value: stats.activeJobs, icon: Activity, color: 'text-amber-400', shadow: 'hover:shadow-[0_10px_30px_rgba(251,191,36,0.15)]', border: 'hover:border-amber-400/40' },
+          ].map((stat, idx) => (
+            <div key={stat.label} className={`bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-5 hover-tilt transition-all duration-500 hover:-translate-y-2 group overflow-hidden relative ${stat.shadow} ${stat.border}`}>
+              <div className="absolute -top-10 -right-10 w-24 h-24 bg-white/5 rounded-full blur-[30px] pointer-events-none group-hover:bg-white/10 transition-colors duration-500" />
+              <stat.icon className={`w-6 h-6 mb-3 relative z-10 ${stat.color} drop-shadow-[0_0_8px_rgba(255,255,255,0.3)] group-hover:scale-110 transition-transform duration-300`} />
+              <p className="text-slate-300 text-sm font-medium relative z-10">{stat.label}</p>
+              <p className="text-3xl font-bold mt-1 text-white relative z-10 drop-shadow-sm">{stat.value}</p>
             </div>
           ))}
         </section>
@@ -407,6 +464,7 @@ function DashboardPage() {
             workspaces={workspaces}
           />
         ) : null}
+        {activeView === 'tokenomics' ? <TokenomicsPage /> : null}
         {activeView === 'settings' ? (
           <SettingsPage
             workspaces={workspaces}

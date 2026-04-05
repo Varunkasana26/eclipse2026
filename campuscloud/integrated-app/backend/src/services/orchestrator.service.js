@@ -16,6 +16,7 @@ const {
   normalizeCommand,
   normalizeExecutionMode,
   normalizeJobType,
+  normalizeJobMetadata,
   normalizeLane,
   normalizeResourceRequirements,
   normalizeTags,
@@ -133,6 +134,8 @@ function createOrchestratorService(options = {}) {
   const store = createStore();
   const events = new EventEmitter();
   const heartbeatTimeoutMs = Number(options.heartbeatTimeoutMs) || 15000;
+  const interruptedJobMaxRetries = Math.max(0, Number(options.interruptedJobMaxRetries) || 0);
+  const shortJobRetryThresholdMs = Math.max(1000, Number(options.shortJobRetryThresholdMs) || 300000);
   const maxLogsPerJob = Number(options.maxLogsPerJob) || 500;
   const backendPublicUrl = String(options.backendPublicUrl || "http://127.0.0.1:5000").replace(/\/+$/, "");
   const fallbackWorkerSecret = String(options.workerSecret || "");
@@ -149,6 +152,36 @@ function createOrchestratorService(options = {}) {
 
   function isFresh(node, now = Date.now()) {
     return now - getTimeMs(node.lastHeartbeatAt) <= heartbeatTimeoutMs;
+  }
+
+  function getJobRetryCount(job) {
+    return Math.max(0, Number(job?.retry_count) || 0);
+  }
+
+  function getJobMaxRetries(job) {
+    return Math.max(0, Number(job?.max_retries) || interruptedJobMaxRetries);
+  }
+
+  function getJobProgress(job) {
+    const parsed = Number(job?.progress);
+    if (!Number.isFinite(parsed)) {
+      return null;
+    }
+
+    return clampNumber(parsed, 0, 100, 0);
+  }
+
+  function getJobTimeoutMs(job) {
+    const parsed = Number(job?.metadata?.timeout_ms ?? job?.timeout_ms);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 300000;
+  }
+
+  function isShortRetryableJob(job) {
+    return getJobTimeoutMs(job) <= shortJobRetryThresholdMs;
+  }
+
+  function shouldRetryInterruptedJob(job) {
+    return getJobRetryCount(job) < getJobMaxRetries(job) && isShortRetryableJob(job);
   }
 
   function getGpuSnapshot(gpu) {
@@ -337,11 +370,19 @@ function createOrchestratorService(options = {}) {
   function getNodeDerived(node, now = Date.now()) {
     const jobs = getNodeJobs(node.node_id);
     const fresh = isFresh(node, now);
+    const reportsBusy =
+      fresh && (node.reported_status === NODE_STATUS.BUSY || Boolean(node.reported_current_job_id));
     const runningJob = jobs.find((job) => job.status === JOB_STATUS.RUNNING) || jobs[0] || null;
-    const currentAllocPercent = jobs.reduce(
+    const currentAllocPercentFromJobs = jobs.reduce(
       (total, job) => total + (Number(job.estimated_gpu_percent) || 0),
       0
     );
+    const currentAllocPercent =
+      currentAllocPercentFromJobs > 0
+        ? currentAllocPercentFromJobs
+        : reportsBusy
+          ? 100
+          : 0;
     const classification = classifyLaneFromGpu(node.gpu);
     const actualFreeVramMb =
       classification.totalVramMb > 0
@@ -354,13 +395,18 @@ function createOrchestratorService(options = {}) {
     const freeVramMb = actualFreeVramMb || estimatedFreeVramMb;
     const dockerReady = Boolean(node.allow_docker && node.docker?.docker_available);
 
-    const status = fresh ? (jobs.length > 0 ? NODE_STATUS.BUSY : NODE_STATUS.IDLE) : NODE_STATUS.OFFLINE;
+    const status =
+      fresh
+        ? jobs.length > 0 || reportsBusy
+          ? NODE_STATUS.BUSY
+          : NODE_STATUS.IDLE
+        : NODE_STATUS.OFFLINE;
 
     return {
       fresh,
       status,
       current_alloc_percent: currentAllocPercent,
-      current_queue_depth: jobs.length,
+      current_queue_depth: jobs.length || (reportsBusy ? 1 : 0),
       utilization_percent: classification.utilizationPercent || Math.min(currentAllocPercent, 100),
       vram_mb: classification.totalVramMb,
       free_vram_mb: freeVramMb,
@@ -370,7 +416,7 @@ function createOrchestratorService(options = {}) {
       lane: classification.lane,
       lane_status: classification.lane_status,
       classification_reason: classification.classification_reason,
-      current_job_id: runningJob?.id || null,
+      current_job_id: runningJob?.id || node.reported_current_job_id || null,
       availability: status === NODE_STATUS.OFFLINE ? "offline" : status === NODE_STATUS.BUSY ? "busy" : "available",
     };
   }
@@ -379,6 +425,18 @@ function createOrchestratorService(options = {}) {
     const derived = getNodeDerived(node, now);
     const heartbeatAgeMs = Math.max(0, now - getTimeMs(node.lastHeartbeatAt));
     const workspace = getWorkspaceRecord(node.workspace_id);
+    const healthStatus =
+      derived.status === NODE_STATUS.OFFLINE
+        ? "offline"
+        : !derived.gpu_available && !derived.docker_ready
+          ? "limited"
+          : "healthy";
+    const usabilityReason =
+      healthStatus === "offline"
+        ? node.offline_reason || "heartbeat-timeout"
+        : healthStatus === "limited"
+          ? "Node is online but missing GPU and Docker runtime support"
+          : null;
 
     return clone({
       node_id: node.node_id,
@@ -412,6 +470,8 @@ function createOrchestratorService(options = {}) {
       current_queue_depth: derived.current_queue_depth,
       last_heartbeat: node.lastHeartbeatAt,
       lastHeartbeatAt: node.lastHeartbeatAt,
+      last_seen: node.last_seen || node.lastHeartbeatAt,
+      lastSeenAt: node.last_seen || node.lastHeartbeatAt,
       heartbeat_age_ms: heartbeatAgeMs,
       heartbeat_timeout_ms: heartbeatTimeoutMs,
       heartbeat_fresh: derived.fresh,
@@ -431,6 +491,8 @@ function createOrchestratorService(options = {}) {
       registeredAt: node.registeredAt,
       last_status_change_at: node.last_status_change_at || node.registeredAt,
       offline_reason: node.offline_reason || null,
+      health_status: healthStatus,
+      usability_reason: usabilityReason,
       isFresh: derived.fresh,
     });
   }
@@ -446,6 +508,7 @@ function createOrchestratorService(options = {}) {
       queued: 0,
       assigned: 0,
       running: 0,
+      interrupted: 0,
       completed: 0,
       failed: 0,
     };
@@ -453,6 +516,8 @@ function createOrchestratorService(options = {}) {
     for (const child of children) {
       if (child.status === JOB_STATUS.RUNNING) {
         counts.running += 1;
+      } else if (child.status === JOB_STATUS.INTERRUPTED) {
+        counts.interrupted += 1;
       } else if (child.status === JOB_STATUS.COMPLETED) {
         counts.completed += 1;
       } else if (child.status === JOB_STATUS.FAILED) {
@@ -500,6 +565,12 @@ function createOrchestratorService(options = {}) {
       logs: safeClone(job.logs, []),
       result: safeClone(job.result, null),
       error: job.error || job.result?.error || null,
+      failure_reason: job.result?.failure_reason || null,
+      retry_count: getJobRetryCount(job),
+      max_retries: getJobMaxRetries(job),
+      progress: getJobProgress(job),
+      last_checkpoint: safeClone(job.last_checkpoint, null),
+      interrupted_at: job.interrupted_at || null,
       node_id: job.node_id || null,
       nodeId: job.node_id || null,
       assignedNodeId: job.node_id || null,
@@ -882,6 +953,10 @@ function createOrchestratorService(options = {}) {
       parent.status = JOB_STATUS.FAILED;
       parent.error = "One or more chunks failed";
       parent.result = buildParentResult(children, progress, parent.status);
+    } else if (progress.interrupted > 0 && progress.running === 0 && progress.assigned === 0 && progress.queued === 0) {
+      parent.status = JOB_STATUS.INTERRUPTED;
+      parent.error = "One or more chunks were interrupted";
+      parent.result = buildParentResult(children, progress, parent.status);
     } else if (progress.completed === progress.total && progress.total > 0) {
       parent.status = JOB_STATUS.COMPLETED;
       parent.error = null;
@@ -955,10 +1030,7 @@ function createOrchestratorService(options = {}) {
         gpu_required: requiresGpu,
       }
     );
-    const metadata = payload.metadata && typeof payload.metadata === "object" ? clone(payload.metadata) : {};
-    if (metadata.job_type) {
-      metadata.job_type = normalizeJobType(metadata.job_type);
-    }
+    const metadata = normalizeJobMetadata(payload.metadata || {});
     if (Array.isArray(metadata.input_artifacts)) {
       metadata.input_artifacts = clone(metadata.input_artifacts);
     } else {
@@ -999,6 +1071,22 @@ function createOrchestratorService(options = {}) {
       logs: [],
       result: null,
       error: null,
+      retry_count: Math.max(
+        0,
+        Number(overrides.retry_count ?? payload.retry_count ?? payload.metadata?.retry_count) || 0
+      ),
+      max_retries: Math.max(
+        0,
+        Number(overrides.max_retries ?? payload.max_retries ?? payload.metadata?.max_retries ?? interruptedJobMaxRetries) || 0
+      ),
+      progress: getJobProgress({
+        progress: overrides.progress ?? payload.progress ?? payload.metadata?.progress ?? 0,
+      }),
+      last_checkpoint: safeClone(
+        overrides.last_checkpoint ?? payload.last_checkpoint ?? payload.metadata?.last_checkpoint,
+        null
+      ),
+      interrupted_at: overrides.interrupted_at ?? payload.interrupted_at ?? null,
       node_id: null,
       created_at: overrides.created_at || nowIso(),
       updated_at: overrides.updated_at || nowIso(),
@@ -1028,6 +1116,10 @@ function createOrchestratorService(options = {}) {
   function getQueueReason(job) {
     if (isAwaitingRenderAssets(job)) {
       return "Waiting for render asset upload";
+    }
+
+    if (getJobRetryCount(job) > 0 && job.interrupted_at) {
+      return `Retry ${getJobRetryCount(job)}/${getJobMaxRetries(job)} queued after node interruption`;
     }
 
     const workspace = getWorkspaceRecord(job.workspace_id);
@@ -1151,7 +1243,7 @@ function createOrchestratorService(options = {}) {
         .map((nodeId) => store.nodes.get(nodeId))
         .filter(Boolean)
         .map((node) => ({ node, derived: getNodeDerived(node) }))
-        .filter(({ derived }) => derived.status !== NODE_STATUS.OFFLINE)
+        .filter(({ derived }) => derived.status === NODE_STATUS.IDLE)
         .filter(({ derived }) => !requiresDockerRuntime(job) || derived.docker_ready)
         .filter(({ derived }) => !job.requires_gpu || derived.gpu_available)
         .filter(({ node, derived }) => derived.current_alloc_percent + job.estimated_gpu_percent <= node.max_alloc_percent)
@@ -1188,7 +1280,7 @@ function createOrchestratorService(options = {}) {
     );
   }
 
-  function failActiveJobsForNode(node, reason) {
+  function interruptActiveJobsForNode(node, reason) {
     const impactedJobs = getNodeJobs(node.node_id);
 
     for (const job of impactedJobs) {
@@ -1196,20 +1288,48 @@ function createOrchestratorService(options = {}) {
         continue;
       }
 
-      job.status = JOB_STATUS.FAILED;
-      job.updated_at = nowIso();
+      const interruptedAt = nowIso();
+      const willRetry = shouldRetryInterruptedJob(job);
+
+      job.max_retries = getJobMaxRetries(job);
+      job.progress = getJobProgress(job);
+      job.status = JOB_STATUS.INTERRUPTED;
+      job.updated_at = interruptedAt;
       job.delivery_status = "complete";
+      job.interrupted_at = interruptedAt;
       job.error = reason;
       job.queue_reason = null;
       job.result = {
         ...(job.result || {}),
         error: reason,
-        failed_by: "node-offline",
+        interrupted_by: "node-offline",
+        interrupted_at: interruptedAt,
         node_id: node.node_id,
+        retry_count: getJobRetryCount(job),
+        max_retries: getJobMaxRetries(job),
+        will_retry: willRetry,
       };
 
-      emitJobEvent(EVENT_TYPES.JOB_UPDATE, job, node, "node-offline");
-      emitJobEvent(EVENT_TYPES.JOB_FAILED, job, node, "node-offline");
+      emitJobEvent(EVENT_TYPES.JOB_UPDATE, job, node, "node-offline-interrupted");
+
+      if (willRetry) {
+        job.retry_count = getJobRetryCount(job) + 1;
+        job.status = JOB_STATUS.QUEUED;
+        job.updated_at = nowIso();
+        job.node_id = null;
+        job.delivered_at = null;
+        job.delivery_status = "pending";
+        job.queue_reason = getQueueReason(job);
+        job.result = {
+          ...(job.result || {}),
+          retry_count: job.retry_count,
+          requeued_at: job.updated_at,
+          requeued_from_node_id: node.node_id,
+        };
+        store.queue.enqueue(job.id);
+        emitJobEvent(EVENT_TYPES.JOB_UPDATE, job, null, "node-offline-requeued");
+      }
+
       syncParentJob(job.parent_job_id, true);
     }
   }
@@ -1223,7 +1343,7 @@ function createOrchestratorService(options = {}) {
       const fresh = isFresh(node, now);
 
       if (!fresh && wasOnline) {
-        failActiveJobsForNode(node, `Node ${node.node_id} missed heartbeat timeout and was marked offline`);
+        interruptActiveJobsForNode(node, "Node went offline during execution");
       }
 
       syncNodeState(node, {
@@ -1303,6 +1423,10 @@ function createOrchestratorService(options = {}) {
       classification_reason: classification.classification_reason,
       status: current?.status || NODE_STATUS.IDLE,
       current_job_id: current?.current_job_id || null,
+      reported_status: Object.values(NODE_STATUS).includes(payload.status)
+        ? payload.status
+        : current?.reported_status || NODE_STATUS.IDLE,
+      reported_current_job_id: payload.current_job_id || current?.reported_current_job_id || null,
       max_alloc_percent: defaultMaxAllocPercent,
       allow_docker: parseBoolean(
         payload.allow_docker ?? onboardingRecord?.allowDocker ?? current?.allow_docker,
@@ -1320,6 +1444,7 @@ function createOrchestratorService(options = {}) {
       docker: safeClone(payload.docker || current?.docker || DEFAULT_DOCKER_INFO, DEFAULT_DOCKER_INFO),
       registeredAt: current?.registeredAt || timestamp,
       lastHeartbeatAt: timestamp,
+      last_seen: timestamp,
       last_status_change_at: current?.last_status_change_at || timestamp,
       offline_reason: null,
     };
@@ -1349,6 +1474,11 @@ function createOrchestratorService(options = {}) {
     }
 
     node.lastHeartbeatAt = payload.timestamp || nowIso();
+    node.last_seen = node.lastHeartbeatAt;
+    node.reported_status = Object.values(NODE_STATUS).includes(payload.status)
+      ? payload.status
+      : node.reported_status || NODE_STATUS.IDLE;
+    node.reported_current_job_id = payload.current_job_id || null;
 
     syncNodeState(node, {
       emit: false,
@@ -1427,8 +1557,9 @@ function createOrchestratorService(options = {}) {
   function assertValidJobStatusTransition(currentStatus, nextStatus) {
     const allowedTransitions = {
       [JOB_STATUS.QUEUED]: new Set([JOB_STATUS.ASSIGNED, JOB_STATUS.FAILED]),
-      [JOB_STATUS.ASSIGNED]: new Set([JOB_STATUS.RUNNING, JOB_STATUS.FAILED]),
-      [JOB_STATUS.RUNNING]: new Set([JOB_STATUS.COMPLETED, JOB_STATUS.FAILED]),
+      [JOB_STATUS.ASSIGNED]: new Set([JOB_STATUS.RUNNING, JOB_STATUS.FAILED, JOB_STATUS.INTERRUPTED]),
+      [JOB_STATUS.RUNNING]: new Set([JOB_STATUS.COMPLETED, JOB_STATUS.FAILED, JOB_STATUS.INTERRUPTED]),
+      [JOB_STATUS.INTERRUPTED]: new Set([JOB_STATUS.QUEUED, JOB_STATUS.FAILED]),
       [JOB_STATUS.COMPLETED]: new Set(),
       [JOB_STATUS.FAILED]: new Set(),
     };
@@ -1462,7 +1593,7 @@ function createOrchestratorService(options = {}) {
 
     assertValidJobStatusTransition(job.status, payload.status);
 
-    if (payload.worker_id && job.node_id && job.node_id !== payload.worker_id) {
+    if (!payload.worker_id || !job.node_id || job.node_id !== payload.worker_id) {
       throw new Error("Job is assigned to a different worker");
     }
 
@@ -1478,6 +1609,22 @@ function createOrchestratorService(options = {}) {
       job.error = String(payload.error);
     } else if (payload.status === JOB_STATUS.COMPLETED) {
       job.error = null;
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, "progress")) {
+      job.progress = getJobProgress({ progress: payload.progress });
+    } else if (payload.status === JOB_STATUS.RUNNING && job.progress === null) {
+      job.progress = 0;
+    } else if (payload.status === JOB_STATUS.COMPLETED) {
+      job.progress = 100;
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, "last_checkpoint")) {
+      job.last_checkpoint = safeClone(payload.last_checkpoint, null);
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, "max_retries")) {
+      job.max_retries = Math.max(0, Number(payload.max_retries) || 0);
+    }
+    if (payload.status === JOB_STATUS.INTERRUPTED) {
+      job.interrupted_at = job.updated_at;
     }
 
     const node = job.node_id ? store.nodes.get(job.node_id) : null;

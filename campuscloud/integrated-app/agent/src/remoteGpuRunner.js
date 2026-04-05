@@ -63,7 +63,7 @@ function validatePythonCode(code) {
   }
 }
 
-function buildFailureResult(job, startedAt, error, infrastructureFailure = true) {
+function buildFailureResult(job, startedAt, error, infrastructureFailure = true, failureReason = "execution_error") {
   return {
     status: "failed",
     logs: [],
@@ -76,6 +76,7 @@ function buildFailureResult(job, startedAt, error, infrastructureFailure = true)
       runner: "remote-gpu",
       gpu_server_url: config.gpuServerUrl,
       infrastructure_failure: infrastructureFailure,
+      failure_reason: failureReason,
     },
   };
 }
@@ -145,6 +146,7 @@ async function executeRemoteJob(job, code, hooks, attempt) {
       runner: "remote-gpu",
       gpu_server_url: config.gpuServerUrl,
       infrastructure_failure: false,
+      failure_reason: errorText ? "execution_error" : null,
     };
 
     if (errorText) {
@@ -166,8 +168,8 @@ async function executeRemoteJob(job, code, hooks, attempt) {
     const durationMs = Date.now() - startedAt;
     const message =
       error.name === "AbortError"
-        ? `GPU server request timed out after ${config.gpuRequestTimeoutMs}ms`
-        : error.message;
+        ? `timeout: GPU server request timed out after ${config.gpuRequestTimeoutMs}ms`
+        : `offline: ${error.message}`;
 
     logger.warn("GPU execution request failed", {
       job_id: job.job_id,
@@ -213,11 +215,21 @@ async function runRemoteGpuJob(job, hooks = {}) {
       }
     }
 
-    const failure = buildFailureResult(job, startedAt, lastError || new Error("GPU execution failed"));
+    const failureReason =
+      lastError?.message?.startsWith("timeout:")
+        ? "timeout"
+        : "offline";
+    const failure = buildFailureResult(
+      job,
+      startedAt,
+      lastError || new Error("offline: GPU execution failed"),
+      true,
+      failureReason
+    );
     await hooks.onFail?.(failure.result);
     return failure;
   } catch (error) {
-    const failure = buildFailureResult(job, startedAt, error, false);
+    const failure = buildFailureResult(job, startedAt, error, false, "validation_error");
     await hooks.onFail?.(failure.result);
     return failure;
   }

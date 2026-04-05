@@ -20,6 +20,8 @@ module.exports = {
     process.env.BACKEND_PUBLIC_URL || `http://127.0.0.1:${parseNumber(process.env.PORT, 5000)}`,
   HEARTBEAT_TIMEOUT_MS: parseNumber(process.env.HEARTBEAT_TIMEOUT_MS, 15000),
   ASSIGNMENT_SWEEP_MS: parseNumber(process.env.ASSIGNMENT_SWEEP_MS, 2000),
+  JOB_INTERRUPT_MAX_RETRIES: Math.max(0, parseNumber(process.env.JOB_INTERRUPT_MAX_RETRIES, 1)),
+  SHORT_JOB_RETRY_THRESHOLD_MS: Math.max(1000, parseNumber(process.env.SHORT_JOB_RETRY_THRESHOLD_MS, 300000)),
   MAX_LOGS_PER_JOB: parseNumber(process.env.MAX_LOGS_PER_JOB, 500),
   DEFAULT_WORKSPACE_ID: process.env.DEFAULT_WORKSPACE_ID || "demo-workspace",
   DEFAULT_MAX_ALLOC_PERCENT: parseNumber(process.env.DEFAULT_MAX_ALLOC_PERCENT, 70),

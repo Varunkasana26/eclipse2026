@@ -10,7 +10,11 @@ function connectToEventStream({ onOpen, onClose, onError, onMessage }) {
   socket.addEventListener('close', () => onClose?.());
   socket.addEventListener('error', () => onError?.());
   socket.addEventListener('message', (event) => {
-    onMessage?.(JSON.parse(event.data));
+    try {
+      onMessage?.(JSON.parse(event.data));
+    } catch {
+      return;
+    }
   });
 
   return () => socket.close();

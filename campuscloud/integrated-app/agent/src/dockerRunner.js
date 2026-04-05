@@ -71,11 +71,16 @@ async function runDockerJob(job, hooks = {}) {
   return new Promise((resolve) => {
     const startedAt = Date.now();
     let dockerMeta;
+    let timedOut = false;
+    let forceKillTimer = null;
 
     try {
       dockerMeta = getDockerArgs(job);
     } catch (error) {
-      const result = buildDockerResult(startedAt, { error: error.message });
+      const result = buildDockerResult(startedAt, {
+        error: error.message,
+        failure_reason: "validation_error",
+      });
       Promise.resolve(hooks.onFail?.(result)).catch(() => {});
       resolve({ status: "failed", logs: [], result });
       return;
@@ -96,11 +101,20 @@ async function runDockerJob(job, hooks = {}) {
 
     const timeoutMs = Number(job.timeout_ms) || 300000;
     const timeout = setTimeout(() => {
+      timedOut = true;
       try {
         proc.kill("SIGTERM");
       } catch {
         return;
       }
+
+      forceKillTimer = setTimeout(() => {
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          return;
+        }
+      }, 5000);
     }, timeoutMs);
 
     let stdout = "";
@@ -137,22 +151,35 @@ async function runDockerJob(job, hooks = {}) {
 
     proc.on("error", async (error) => {
       clearTimeout(timeout);
-      const result = buildDockerResult(startedAt, { error: error.message, output: stdout });
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer);
+      }
+      const result = buildDockerResult(startedAt, {
+        error: error.message,
+        output: stdout,
+        failure_reason: "execution_error",
+      });
       await hooks.onFail?.(result);
       resolve({ status: "failed", logs: [], result });
     });
 
     proc.on("close", async (exitCode, signal) => {
       clearTimeout(timeout);
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer);
+      }
 
       const result = buildDockerResult(startedAt, {
         exit_code: typeof exitCode === "number" ? exitCode : -1,
         output: stdout,
         error:
-          exitCode === 0
+          timedOut
+            ? `timeout: Docker job exceeded ${timeoutMs}ms and was terminated`
+            : exitCode === 0
             ? null
             : stderr.trim() || `Docker job exited with code ${exitCode}${signal ? ` (${signal})` : ""}`,
         signal: signal || null,
+        failure_reason: timedOut ? "timeout" : exitCode === 0 ? null : "execution_error",
       });
 
       if (exitCode === 0) {

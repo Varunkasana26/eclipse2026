@@ -1,5 +1,6 @@
-﻿import React from 'react';
+import React from 'react';
 import { Cpu, Server } from 'lucide-react';
+import { getReadableStatus, getStatusBadgeClass } from '../utils/statusPresentation';
 
 function formatTime(value) {
   if (!value) {
@@ -24,7 +25,7 @@ function formatFreshness(ageMs) {
 
 function NodeGrid({ nodes }) {
   return (
-    <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6">
+    <div className="bg-white/5 backdrop-blur-xl shadow-[0_8px_40px_rgba(0,255,255,0.06)] border border-white/10 rounded-3xl p-6">
       <div className="flex items-center gap-3 mb-5">
         <Server className="w-5 h-5 text-cyan-300" />
         <h2 className="text-xl font-semibold">Available Providers</h2>
@@ -36,25 +37,30 @@ function NodeGrid({ nodes }) {
           </div>
         ) : (
           nodes.map((node) => (
-            <div key={node.node_id || node.nodeId} className="bg-slate-950 border border-slate-800 rounded-2xl p-4">
+            <div key={node.node_id || node.nodeId} className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-lg font-semibold">{node.name || node.node_id}</p>
                   <p className="text-sm text-slate-400 mt-1">{node.hostname}</p>
                 </div>
-                <span className={`text-xs font-semibold px-3 py-1 rounded-full ${
-                  node.status === 'idle'
-                    ? 'bg-emerald-500/15 text-emerald-300'
-                    : node.status === 'busy'
-                      ? 'bg-amber-500/15 text-amber-300'
-                      : 'bg-slate-700 text-slate-300'
-                }`}>
-                  {node.status}
-                </span>
+                <div className="flex flex-col items-end gap-2">
+                  <span className={`text-xs font-semibold px-3 py-1 rounded-full ${getStatusBadgeClass(node.status, 'bg-slate-700 text-slate-300')}`}>
+                    {getReadableStatus(node.status)}
+                  </span>
+                  <span className={`text-[11px] font-semibold px-3 py-1 rounded-full ${
+                    node.health_status === 'healthy'
+                      ? 'bg-emerald-500/15 text-emerald-300'
+                      : node.health_status === 'limited'
+                        ? 'bg-amber-500/15 text-amber-300'
+                        : 'bg-rose-500/15 text-rose-300'
+                  }`}>
+                    {node.health_status || 'unknown'}
+                  </span>
+                </div>
               </div>
               <div className="mt-4 space-y-2 text-sm text-slate-300">
                 <p>Online: <span className="text-slate-100">{node.online ? 'yes' : 'no'}</span></p>
-                <p>Availability: <span className="text-slate-100">{node.availability || node.status}</span></p>
+                <p>Availability: <span className="text-slate-100">{getReadableStatus(node.availability || node.status)}</span></p>
                 <p>Workspace: <span className="text-slate-100">{node.workspace_id || 'unassigned'}</span></p>
                 <p>Lane: <span className="text-slate-100 uppercase">{node.lane || node.lane_status || 'unsupported'}</span></p>
                 <p>GPU available: <span className="text-slate-100">{node.gpu_available ? 'yes' : 'no'}</span></p>
@@ -69,6 +75,9 @@ function NodeGrid({ nodes }) {
                 <p>Last heartbeat: <span className="text-slate-100">{formatTime(node.last_heartbeat || node.lastHeartbeatAt)}</span></p>
                 {node.offline_reason ? (
                   <p>Offline reason: <span className="text-rose-300">{node.offline_reason}</span></p>
+                ) : null}
+                {node.usability_reason ? (
+                  <p>Health note: <span className="text-amber-300">{node.usability_reason}</span></p>
                 ) : null}
               </div>
               <div className="mt-4 flex items-center gap-2 text-xs text-slate-400">
