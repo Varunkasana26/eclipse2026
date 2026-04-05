@@ -832,6 +832,12 @@ function createOrchestratorService(options = {}) {
     };
   }
 
+  function getOnboardingDownloadUrl(workerId, token, suffix) {
+    const safeWorkerId = encodeURIComponent(String(workerId || "").trim());
+    const safeToken = encodeURIComponent(String(token || "").trim());
+    return `${backendPublicUrl}/api/onboarding/nodes/${safeWorkerId}/${suffix}?token=${safeToken}`;
+  }
+
   function getOnboardingSetupScript(workerId, token) {
     const envFile = getOnboardingEnvFile(workerId, token);
     const escapedEnv = envFile.content.replace(/`/g, "``");
@@ -885,14 +891,31 @@ function createOrchestratorService(options = {}) {
 
     store.onboarding.set(workerId, record);
 
+    const envFile = getOnboardingEnvFile(workerId, workerToken);
+    const setupScript = getOnboardingSetupScript(workerId, workerToken);
+    const setupGuide = getOnboardingGuideFile(workerId, workerToken);
+
     return {
       ...toPublicOnboarding(record),
       workerToken,
       backendUrl: record.backendUrl,
       nodeName: record.workerName,
-      envFile: getOnboardingEnvFile(workerId, workerToken),
-      setupScript: getOnboardingSetupScript(workerId, workerToken),
-      setupGuide: getOnboardingGuideFile(workerId, workerToken),
+      envFile: {
+        ...envFile,
+        downloadUrl: getOnboardingDownloadUrl(workerId, workerToken, "env"),
+      },
+      setupScript: {
+        ...setupScript,
+        downloadUrl: getOnboardingDownloadUrl(workerId, workerToken, "setup-script"),
+      },
+      setupGuide: {
+        ...setupGuide,
+        downloadUrl: getOnboardingDownloadUrl(workerId, workerToken, "setup-guide"),
+      },
+      agentPackage: {
+        fileName: `campuscloud-agent-${workerId}.zip`,
+        downloadUrl: getOnboardingDownloadUrl(workerId, workerToken, "agent-package"),
+      },
       startCommand: "npm install && npm start",
     };
   }
