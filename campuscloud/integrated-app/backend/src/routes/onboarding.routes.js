@@ -1,4 +1,5 @@
 const express = require("express");
+const { createAgentPackageBundle } = require("../services/agentPackage.service");
 
 function createOnboardingRoutes(orchestrator) {
   const router = express.Router();
@@ -48,6 +49,36 @@ function createOnboardingRoutes(orchestrator) {
       res.setHeader("Content-Disposition", `attachment; filename="${file.fileName}"`);
       return res.send(file.content);
     } catch (error) {
+      return res.status(404).json({ error: error.message });
+    }
+  });
+
+  router.get("/nodes/:workerId/agent-package", async (req, res) => {
+    let bundle = null;
+
+    try {
+      const token = req.query.token ? String(req.query.token) : "";
+      const envFile = orchestrator.getOnboardingEnvFile(req.params.workerId, token);
+      const setupScript = orchestrator.getOnboardingSetupScript(req.params.workerId, token);
+      const setupGuide = orchestrator.getOnboardingSetupGuide(req.params.workerId, token);
+
+      bundle = await createAgentPackageBundle({
+        workerId: req.params.workerId,
+        envFile,
+        setupScript,
+        setupGuide,
+      });
+
+      return res.download(bundle.filePath, bundle.fileName, async (error) => {
+        await bundle.cleanup().catch(() => {});
+        if (error && !res.headersSent) {
+          res.status(500).json({ error: error.message });
+        }
+      });
+    } catch (error) {
+      if (bundle) {
+        await bundle.cleanup().catch(() => {});
+      }
       return res.status(404).json({ error: error.message });
     }
   });
